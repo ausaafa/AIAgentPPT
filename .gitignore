@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Flask
+instance/
+.webassets-cache/
+
+# Uploaded / generated app content
+uploads/*
+!uploads/.gitkeep
+
+generated/*
+!generated/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+
+# PPT / DOC artifacts you usually don't want in git
+*.pptx
+*.docx
+*.pdf
+
+# Exceptions if you keep template assets in repo
+!templates/*.pptx
+!static/*.pdf

@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Template Generator Demo</title>
+ <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+:root {
+  --bg-main: #ffffff;
+  --bg-soft: #f4f4f4;
+  --card-glass: rgba(255, 255, 255, 0.75);
+  --card-border: rgba(0, 0, 0, 0.12);
+  --text-main: #000;
+  --text-muted: #555;
+
+--btn-grad: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+--btn-shadow: 0 6px 18px rgba(0,0,0,.28);
+
+
+  --input-bg: #f1f1f1;
+  --input-border: #cfcfcf;
+}
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+
+body {
+  background: linear-gradient(120deg, var(--bg-main), var(--bg-soft));
+  color: var(--text-main);
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+/* ---------- Layout ---------- */
+.container {
+  display: flex;
+  gap: 30px;
+  width: 95%;
+  max-width: 1600px;
+  position: relative; /* ✅ REQUIRED */
+}
+
+
+.left-panel,
+.right-panel {
+  flex: 1;
+  background: var(--card-glass);
+  backdrop-filter: blur(16px);
+  padding: 30px;
+  border-radius: 18px;
+  border: 1px solid var(--card-border);
+  box-shadow: 0 12px 40px rgba(0,0,0,.12);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.left-panel {
+  position: relative;
+  overflow: hidden;      /* keeps gradient inside rounded corners */
+}
+
+.left-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--btn-grad);     /* ✅ exact same gradient as buttons */
+  border-radius: 18px;
+  box-shadow: var(--btn-shadow);   /* ✅ same shadow as buttons */
+  z-index: 0;
+}
+
+/* makes sure everything inside stays on top and unchanged */
+.left-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+
+/* ---------- Template Preview ---------- */
+.template-showcase {
+  background: #eeeeee;
+  border-radius: 14px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 20px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #000;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+}
+
+.template-showcase img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* ---------- Inputs ---------- */
+select,
+input[type="text"] {
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: #000;
+  margin-bottom: 15px;
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* ---------- File Upload ---------- */
+.file-upload-section {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.file-name-display {
+  background: #eaeaea;
+  border-radius: 10px;
+  padding: 16px;
+  color: #444;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid #ccc;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-upload {
+  background: #fafafa;
+  border: 2px dashed #999;
+  border-radius: 14px;
+  height: 80px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #000;
+  font-size: 1.15rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .25s ease;
+}
+
+.file-upload:hover {
+  background: #fff;
+  border-color: #000;
+}
+
+/* ---------- Buttons ---------- */
+.reset-btn,
+.generate-btn,
+.animate-btn,
+.download-btn,
+.mcq-grade-btn {
+  background: var(--btn-grad);
+  color: #ffffff;
+  border: none;
+  border-radius: 14px;
+  font-weight: 800;                 /* strong, exam-grade */
+  cursor: pointer;
+  box-shadow: var(--btn-shadow);
+  transition: transform .18s ease, filter .18s ease;
+  letter-spacing: 0.4px;
+}
+
+.reset-btn,
+.generate-btn,
+.animate-btn {
+  flex: 1;                         /* 🔑 equal vertical growth */
+  font-size: 1.45rem;
+  margin-bottom: 15px;
+  min-height: 72px;                /* keeps them strong, not tiny */
+}
+
+
+.download-btn {
+  width: 100%;
+  height: 100%;
+  font-size: 1.3rem;
+}
+
+.mcq-grade-btn {
+  font-size: 1.15rem;
+  padding: 12px 18px;
+}
+
+/* Hover — subtle lift only */
+.reset-btn:hover,
+.generate-btn:hover,
+.animate-btn:hover,
+.download-btn:hover,
+.mcq-grade-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);         /* gentle emphasis */
+}
+
+/* ---------- Panel Toast Modal ---------- */
+.panel-toast {
+  position: absolute;
+  bottom: -90px;
+  left: 50%;
+  transform: translateX(-50%);
+
+  width: 460px;
+  max-width: calc(100% - 60px);
+
+  background: #ffffff;                /* ✅ inverted */
+  color: #000000;                     /* ✅ inverted */
+  border-radius: 14px;
+  padding: 14px 18px;
+
+  border: 1px solid rgba(0,0,0,.18);  /* ✅ makes white toast visible */
+  box-shadow: 0 14px 30px rgba(0,0,0,.20);
+
+  opacity: 0;
+  pointer-events: none;
+
+  transition: opacity .25s ease, transform .25s ease;
+  z-index: 20;
+}
+
+
+.panel-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+.toast-text {
+  font-size: 1.18rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.toast-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(255,255,255,.15);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toast-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ffffff, #bbbbbb);
+  transition: width .15s linear;
+}
+.toast-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.toast-check {
+  color: #16a34a;               /* green still good on white */
+  font-size: 1.1rem;
+}
+
+.toast-progress {
+  width: 100%;
+  height: 3px;
+  background: rgba(0,0,0,.15);  /* ✅ inverted */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.toast-progress-fill {
+  width: 0%;
+  height: 100%;
+  background: #000000;          /* ✅ inverted */
+  transition: width .15s linear;
+}
+
+
+/* ---------- Output ---------- */
+.output-area {
+  background: #f2f2f2;
+  border-radius: 14px;
+  height: 280px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+  margin-top: auto;   /* 🔑 THIS aligns bottoms */
+}
+
+
+.progress-bar-container {
+  width: 100%;
+  height: 14px;
+  background: #ddd;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #000, #555);
+  transition: width .3s ease;
+}
+
+/* ---------- MCQ Overlay ---------- */
+.mcq-overlay {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mcq-row input {
+  background: #fff;
+  border: 1px solid #ccc;
+  color: #000;
+}
+
+/* ---------- Small Text ---------- */
+.mcq-row-question { color: #222; }
+.mcq-score { color: #000; }
+</style>
+
+
+
+
+
+</head>
+<body>
+  <div class="container">
+    <div class="left-panel">
+      <div class="template-section">
+        <div class="template-showcase" id="showcase">
+          <div id="showcaseText" style="font-size:1.4rem; margin-bottom:12px;">
+            Selected template showcase
+          </div>
+         
+
+          <input 
+            type="text" 
+            id="cbtInputInside"
+            placeholder="Enter CBT topic..."
+            style="
+              display:none;
+              width: 80%;
+              padding: 14px;
+              margin-top: 10px;
+              border-radius: 8px;
+              border: none;
+              background:#333;
+              color:white;
+              font-size:1.1rem;
+              text-align:center;
+            ">
+        </div>
+
+        <select id="templateSelect">
+          <option value="none">Select a template</option>
+          <option value="cbt">CBT Generator</option>
+          <option value="vba">MCQ Generator</option>
+          <option value="mcq2">MCQ Generator 2</option>
+          <option value="brand_template">Brand/Drug Name Generator</option>
+          <option value="brand_template_mobile">Brand/Drug Name (Mobile)</option>
+          <option value="vba_mobile">MCQ Generator (Mobile)</option>
+          <option value="cbt_parser">CBT Parser</option>
+          <option value="docx_to_html">DOCX → HTML</option>
+
+        </select>
+      </div>
+
+      <div class="file-upload-section">
+        <div class="file-name-display">
+        <span id="fileName" class="file-name-text">No file added</span>
+        </div>
+        <div class="file-upload" id="fileUpload">Add file or drag file here</div>
+      </div>
+    </div>
+
+    <div class="right-panel">
+      <button class="reset-btn" id="resetBtn">Reset</button>
+      <button class="generate-btn" id="generateBtn">Generate</button>
+      <button class="animate-btn" id="animateBtn">Animate</button> <!-- New Animate button -->
+      <div class="output-area" id="output">
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <button class="download-btn" id="downloadBtn">Download Generated File</button>
+      </div>
+    </div> <!-- closes right-panel -->
+
+    <!-- ✅ Container-centered toast -->
+    <div id="panelToast" class="panel-toast">
+      <div class="toast-row">
+        <span class="toast-message" id="toastText">File uploaded</span>
+        <span class="toast-check">✔</span>
+      </div>
+      <div class="toast-progress">
+        <div class="toast-progress-fill" id="toastBarFill"></div>
+      </div>
+    </div>
+
+  </div> <!-- closes container -->
+
+
+<script>
+  const templateSelect = document.getElementById('templateSelect');
+  const showcase = document.getElementById('showcase');
+  const fileUpload = document.getElementById('fileUpload');
+  const fileNameDisplay = document.getElementById('fileName');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const generateBtn = document.getElementById('generateBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const animateBtn = document.getElementById('animateBtn'); // Added reference to animate button
+  const output = document.getElementById('output');
+const MCQ_ANIMATION_CODE = `
+Sub AutoOpen()
+    AnimateMCQSlides
+End Sub
+
+Sub AnimateMCQSlides()
+
+    Dim sld As Slide
+    Dim shp As Shape
+    Dim seq As Sequence
+    Dim questionBox As Shape
+    Dim answerBox As Shape
+    Dim optionBoxes As Collection
+    Dim isAnswerSlide As Boolean
+    
+    For Each sld In ActivePresentation.Slides
+        
+        Set seq = sld.TimeLine.MainSequence
+        
+        Do While seq.Count > 0
+            seq(1).Delete
+        Loop
+        
+        Set optionBoxes = New Collection
+        Set questionBox = Nothing
+        Set answerBox = Nothing
+        isAnswerSlide = False
+        
+        For Each shp In sld.Shapes
+            If shp.HasTextFrame Then
+                If shp.TextFrame.HasText Then
+                    Dim txt As String
+                    txt = Trim(shp.TextFrame.TextRange.Text)
+                    
+                    If InStr(1, txt, "Correct Answer:", vbTextCompare) > 0 Then
+                        isAnswerSlide = True
+                        Set answerBox = shp
+                    End If
+                    
+                    If Left(txt, 1) = "Q" And InStr(txt, ":") > 0 Then
+                        Set questionBox = shp
+                    End If
+                    
+                    If Left(txt, 2) Like "[A-D])" Then
+                        optionBoxes.Add shp
+                    End If
+                End If
+            End If
+        Next shp
+        
+        If Not questionBox Is Nothing Then
+            seq.AddEffect questionBox, msoAnimEffectAppear, , msoAnimTriggerOnPageClick
+        End If
+        
+        If Not isAnswerSlide Then
+            Dim i As Integer
+            For i = 1 To optionBoxes.Count
+                seq.AddEffect optionBoxes(i), msoAnimEffectAppear, , msoAnimTriggerOnPageClick
+            Next i
+        End If
+        
+        If isAnswerSlide Then
+            If Not answerBox Is Nothing Then
+                seq.AddEffect answerBox, msoAnimEffectAppear, , msoAnimTriggerOnPageClick
+            End If
+        End If
+        
+    Next sld
+
+End Sub
+`;
+
+const DRUG_ANIMATION_CODE = `
+Sub AutoOpen()
+    Call AddDrugSlideAnimations
+End Sub
+
+Sub AddDrugSlideAnimations()
+    Dim sld As Slide
+    Dim shp As Shape
+    Dim seq As Sequence
+    Dim animList As Collection
+    Set animList = New Collection
+
+    For Each sld In ActivePresentation.Slides
+        Set seq = sld.TimeLine.MainSequence
+        
+        Do While seq.Count > 0
+            seq(1).Delete
+        Loop
+
+        Set animList = New Collection
+       
+        For Each shp In sld.Shapes
+            If shp.HasTextFrame Then
+                If shp.TextFrame.HasText Then
+                    If shp.Fill.ForeColor.RGB = RGB(51, 102, 204) Then
+                        animList.Add shp
+                    ElseIf shp.Fill.ForeColor.RGB = RGB(255, 204, 0) Then
+                        animList.Add shp
+                    ElseIf shp.TextFrame.TextRange.Font.Bold = msoTrue Then
+                        animList.Add shp
+                    End If
+                End If
+            End If
+        Next shp
+       
+        Dim i As Integer
+        For i = 1 To animList.Count
+            seq.AddEffect animList(i), msoAnimEffectAppear, , msoAnimTriggerOnPageClick
+        Next i
+    Next sld
+End Sub
+`;
+
+  let uploadedFilename = null;
+
+  templateSelect.addEventListener("change", () => {
+    const selected = templateSelect.value;
+
+    // Reset showcase area
+    showcase.innerHTML = `
+      <div id="showcaseText" style="font-size:1.4rem; margin-bottom:12px;">
+        Selected template showcase
+      </div>
+      <input type="text" id="cbtInputInside" placeholder="Enter CBT topic..."
+        style="display:none;width:80%;padding:14px;margin-top:10px;border-radius:8px;border:none;background:#333;color:white;font-size:1.1rem;text-align:center;">
+    `;
+
+    // Default output (progress + download) for all EXCEPT MCQ grader
+    if (selected !== "mcq_grader") {
+      output.innerHTML = `
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <button class="download-btn" id="downloadBtn">Download Generated File</button>
+      `;
+    } else {
+      output.innerHTML = `
+        <div class="mcq-overlay" id="mcqOverlay">
+          <div class="mcq-header">MCQ Grader</div>
+          <div>Upload your MCQ file, then click <b>Generate</b> to load questions.</div>
+        </div>
+      `;
+    }
+
+    // CBT mode
+    if (selected === "cbt") {
+      document.getElementById("showcaseText").textContent = "Enter a topic";
+      document.getElementById("cbtInputInside").style.display = "block";
+      return;
+    }
+
+    // VBA preview image
+    if (selected === "vba") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/VBATemplate1.png' style='max-width:100%;max-height:100%;'>";
+      return;
+    }
+        // VBA preview image
+    if (selected === "mcq2") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/mcq2.png' style='max-width:100%;max-height:100%;'>";
+      return;
+    }
+    // Brand/drug template preview
+    if (selected === "brand_template") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/Drugtemplate.png' style='max-width:100%;max-height:100%;'>";
+      return;
+    }
+
+    // Brand / Drug Mobile preview
+    if (selected === "brand_template_mobile") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/brandmobile1.png' style='max-width:100%;max-height:100%;object-fit:contain;'>";
+      return;
+    }
+
+    // MCQ Mobile preview
+    if (selected === "vba_mobile") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/mcqmobile1.png' style='max-width:100%;max-height:100%;object-fit:contain;'>";
+      return;
+    }
+
+    if (selected === "mcq_grader") {
+      document.getElementById("showcaseText").textContent =
+        "MCQ Grader – upload MCQ file then click Generate";
+      return;
+    }
+    
+    if (selected === "cbt_parser") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/cbtparser.png' style='max-width:100%;max-height:100%;'>";
+      return;
+    }
+    
+    if (selected === "docx_to_html") {
+    document.getElementById("showcaseText").textContent =
+      "Upload a DOCX file to convert into clean HTML";
+      return;
+    }
+
+
+    // Default text
+    const showcaseText = document.getElementById("showcaseText");
+    showcaseText.textContent =
+      templateSelect.options[templateSelect.selectedIndex].text + " selected";
+  });
+  const panelToast = document.getElementById("panelToast");
+const toastText = document.getElementById("toastText");
+const toastBarFill = document.getElementById("toastBarFill");
+
+let toastTimer = null;
+
+function showToast(message, duration = 3500, persistent = false) {
+  if (toastTimer) clearInterval(toastTimer);
+
+  toastText.textContent = message;
+  toastBarFill.style.width = "0%";
+  panelToast.classList.add("show");
+
+  // ✅ ONLY stay visible when explicitly requested
+  if (persistent) {
+    toastBarFill.style.width = "100%";
+    return;
+  }
+
+  let progress = 0;
+  toastTimer = setInterval(() => {
+    progress += 100 / (duration / 50);
+    toastBarFill.style.width = Math.min(progress, 100) + "%";
+
+    if (progress >= 100) {
+      clearInterval(toastTimer);
+      toastTimer = null;
+      setTimeout(() => {
+        panelToast.classList.remove("show");
+      }, 200);
+    }
+  }, 50);
+}
+
+
+  // Handle file upload (click + drag)
+  fileUpload.addEventListener('click', async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,.pdf,.docx';
+    input.onchange = async () => {
+      const file = input.files[0];
+      await uploadFile(file);
+    };
+    input.click();
+  });
+
+  fileUpload.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    fileUpload.classList.add('dragover');
+  });
+
+  fileUpload.addEventListener('dragleave', () => {
+    fileUpload.classList.remove('dragover');
+  });
+
+  fileUpload.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    fileUpload.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    await uploadFile(file);
+  });
+
+  async function uploadFile(file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch('/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+    if (data.filename) {
+      uploadedFilename = data.filename;
+      fileNameDisplay.textContent = `Uploaded: ${data.filename}`;
+      showToast("File uploaded successfully");
+
+    } else {
+     showToast("Upload failed");
+
+    }
+  }
+
+  // Render MCQ grader overlay
+  function renderMcqOverlay(mcqs) {
+    output.innerHTML = "";
+
+    const overlay = document.createElement("div");
+    overlay.className = "mcq-overlay";
+
+    const header = document.createElement("div");
+    header.className = "mcq-header";
+    header.textContent = "MCQ Grader";
+    overlay.appendChild(header);
+
+    const score = document.createElement("div");
+    score.className = "mcq-score";
+    score.id = "mcqScore";
+    score.textContent = `Loaded ${mcqs.length} questions. Enter A/B/C/D then click Grade All.`;
+    overlay.appendChild(score);
+
+    mcqs.forEach((mcq, idx) => {
+      const row = document.createElement("div");
+      row.className = "mcq-row";
+      row.dataset.answer = mcq.answer;
+
+      const num = document.createElement("div");
+      num.className = "mcq-row-number";
+      num.textContent = (idx + 1) + ".";
+      row.appendChild(num);
+
+      const qText = document.createElement("div");
+      qText.className = "mcq-row-question";
+      qText.title = mcq.question;
+      qText.textContent = mcq.question;
+      row.appendChild(qText);
+
+      const input = document.createElement("input");
+      input.maxLength = 1;
+      input.className = "mcq-input";
+      input.addEventListener("input", () => {
+        input.value = input.value.toUpperCase().replace(/[^ABCD]/g, "");
+      });
+      row.appendChild(input);
+
+      const result = document.createElement("div");
+      result.className = "mcq-row-result";
+      row.appendChild(result);
+
+      overlay.appendChild(row);
+    });
+
+    const gradeBtn = document.createElement("button");
+    gradeBtn.className = "mcq-grade-btn";
+    gradeBtn.textContent = "Grade All";
+    gradeBtn.addEventListener("click", () => {
+      const rows = overlay.querySelectorAll(".mcq-row");
+      let correctCount = 0;
+      let attempted = 0;
+
+      rows.forEach((row) => {
+        const ans = row.dataset.answer;
+        const input = row.querySelector("input");
+        const result = row.querySelector(".mcq-row-result");
+        const user = (input.value || "").toUpperCase().trim();
+
+        if (!user) {
+          result.textContent = "No answer";
+          result.style.color = "#ffca28";
+          return;
+        }
+
+        if (!"ABCD".includes(user)) {
+          result.textContent = "Enter A–D";
+          result.style.color = "#ffca28";
+          return;
+        }
+
+        attempted += 1;
+
+        if (user === ans) {
+          correctCount += 1;
+          result.textContent = "Right";
+          result.style.color = "#00e676";
+        } else {
+          result.textContent = `Wrong (Correct: ${ans})`;
+          result.style.color = "#ff5252";
+        }
+      });
+
+      const scoreEl = document.getElementById("mcqScore");
+      if (attempted === 0) {
+        scoreEl.textContent = "No questions attempted yet.";
+      } else {
+        scoreEl.textContent = `Score: ${correctCount} / ${attempted} (Total questions: ${mcqs.length})`;
+      }
+    });
+
+    overlay.appendChild(gradeBtn);
+    output.appendChild(overlay);
+  }
+
+  // Handle Generate button
+  generateBtn.addEventListener('click', async () => {
+    const template = templateSelect.value;
+
+    if (template === "none") {
+      showToast("Please select a template");
+      return;
+    }
+
+    // MCQ GRADER MODE (no download, just overlay)
+    if (template === "mcq_grader") {
+      if (!uploadedFilename) {
+        showToast("Please upload a file first");
+
+        return;
+      }
+
+      const res = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: uploadedFilename,
+          template: "mcq_grader",
+          cbt_topic: ""
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        showToast('MCQ load failed: ' + data.error);
+        return;
+      }
+
+      renderMcqOverlay(data.mcqs);
+      return;
+    }
+    // All other templates = original behaviour (progress + download)
+    if (template !== "cbt" && !uploadedFilename) {
+      showToast("Please upload a file first", 3500);
+      return;
+    }
+
+
+    const progressBar = document.getElementById("progressBar");
+    const downloadBtnLive = document.getElementById("downloadBtn");
+
+    if (progressBar) {
+      progressBar.style.width = '0%';
+      let progress = 0;
+      const interval = setInterval(() => {
+        if (progress >= 100) clearInterval(interval);
+        else {
+          progress += 10;
+          progressBar.style.width = progress + '%';
+        }
+      }, 200);
+
+      const res = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: uploadedFilename,
+          template: template,
+          cbt_topic: document.getElementById("cbtInputInside")
+            ? document.getElementById("cbtInputInside").value
+            : ""
+        })
+      });
+
+      const data = await res.json();
+      clearInterval(interval);
+      progressBar.style.width = '100%';
+
+      if (data.download_url) {
+
+        // ================= DOCX → HTML (COPY TO CLIPBOARD) =================
+        if (template === "docx_to_html") {
+          showToast("HTML generated – click Download to copy", 0, true);
+
+          if (downloadBtnLive) {
+            downloadBtnLive.onclick = async () => {
+              panelToast.classList.remove("show");
+
+              try {
+                const res = await fetch(data.download_url);
+                const htmlText = await res.text();
+
+                await navigator.clipboard.writeText(htmlText);
+                showToast("✅ HTML code copied to clipboard", 3500);
+              } catch (err) {
+                showToast("❌ Failed to copy HTML to clipboard", 3500);
+              }
+            };
+          }
+
+        } else {
+          // ================= ALL OTHER TEMPLATES (NORMAL DOWNLOAD) =================
+          showToast("File generated successfully – click Download", 0, true);
+
+          if (downloadBtnLive) {
+            downloadBtnLive.dataset.url = data.download_url;
+            downloadBtnLive.onclick = () => {
+              panelToast.classList.remove("show");
+              window.location.href = downloadBtnLive.dataset.url;
+            };
+          }
+        }
+
+      } else {
+        showToast("Generation failed");
+      }
+
+    }
+  });
+
+// Handle Animate button (CONDITIONAL + CLIPBOARD)
+animateBtn.addEventListener('click', async () => {
+  const selected = templateSelect.value;
+
+  // MCQ Generator ONLY (regular, not mobile)
+  if (selected === "vba") {
+    await navigator.clipboard.writeText(MCQ_ANIMATION_CODE);
+    showToast("MCQ Animation Code Copied", 3500);
+    return;
+  }
+
+  // Brand / Drug Generator ONLY (regular, not mobile)
+  if (selected === "brand_template") {
+    await navigator.clipboard.writeText(DRUG_ANIMATION_CODE);
+    showToast("Drug Animation Code Copied", 3500);
+    return;
+  }
+
+  // Any other template
+  showToast("Select MCQ or Brand template to copy animation code", 3500);
+});
+
+  // Reset
+  resetBtn.addEventListener('click', () => {
+    const progressBar = document.getElementById("progressBar");
+    if (progressBar) progressBar.style.width = '0%';
+
+    showcase.innerHTML = 'Selected template showcase';
+    fileNameDisplay.textContent = 'No file added';
+    templateSelect.value = 'none';
+    uploadedFilename = null;
+    if (downloadBtn) downloadBtn.dataset.url = '';
+    output.innerHTML = `
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <button class="download-btn" id="downloadBtn">Download Generated File</button>
+    `;
+    showToast("Reset complete");
+
+  });
+</script>
+
+
+</body>
+</html>
