@@ -1889,4 +1889,4 @@ def download_file(filename):
 if __name__ == "__main__":
     if not PPTX_AVAILABLE:
         print("WARNING: python-pptx is not installed. Please run: pip install python-pptx")
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=8502, debug=False)
