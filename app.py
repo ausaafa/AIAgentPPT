@@ -1528,7 +1528,89 @@ def create_ppt_template_presentation(mcqs, output_path):
     except Exception as e:
         print(f"Error creating PPT template presentation: {e}")
         return False
+def translate_texts_to_french_batch(texts: list[str]) -> list[str]:
+    clean_texts = [t if t else "" for t in texts]
 
+    if not any(t.strip() for t in clean_texts):
+        return clean_texts
+
+    joined = "\n---BLOCK-END---\n".join(clean_texts)
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate ALL English text into natural, professional French. "
+                    "Write like a polished textbook / DeepL-quality translation. "
+                    "Do not skip short words, labels, headings, titles, or all-caps text. "
+                    "If the standalone word is TEST, translate it as ESSAI. "
+                    "Do not summarize. Do not add notes. "
+                    "Preserve numbers, punctuation, line breaks, and formatting markers. "
+                    "Keep every block separated exactly with ---BLOCK-END---."
+                ),
+            },
+            {"role": "user", "content": joined},
+        ],
+        temperature=0,
+    )
+
+    translated = response.choices[0].message.content or joined
+    parts = [p.strip() for p in translated.split("---BLOCK-END---")]
+
+    if len(parts) != len(clean_texts):
+        # fallback: translate one by one instead of silently ignoring
+        fixed = []
+        for text in clean_texts:
+            if text.strip():
+                fixed.append(translate_texts_to_french_batch([text])[0])
+            else:
+                fixed.append(text)
+        return fixed
+
+    return parts
+
+
+def translate_docx_keep_layout(input_path: str, output_path: str):
+    doc = Document(input_path)
+
+    paragraphs = []
+
+    def collect_paragraphs_from_container(container):
+        for paragraph in container.paragraphs:
+            if paragraph.text.strip():
+                paragraphs.append(paragraph)
+
+        for table in container.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    collect_paragraphs_from_container(cell)
+
+    collect_paragraphs_from_container(doc)
+
+    for section in doc.sections:
+        collect_paragraphs_from_container(section.header)
+        collect_paragraphs_from_container(section.footer)
+
+    batch_size = 30
+
+    for i in range(0, len(paragraphs), batch_size):
+        batch = paragraphs[i:i + batch_size]
+        original_texts = [p.text for p in batch]
+        translated_texts = translate_texts_to_french_batch(original_texts)
+
+        for paragraph, translated in zip(batch, translated_texts):
+            if not paragraph.runs:
+                paragraph.add_run(translated)
+                continue
+
+            paragraph.runs[0].text = translated
+
+            for run in paragraph.runs[1:]:
+                run.text = ""
+
+    doc.save(output_path)
 
 # ---------------- ROUTES ----------------
 @app.route("/")
@@ -1658,6 +1740,25 @@ Rules:
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         if not os.path.exists(filepath):
             return jsonify({"error": f"Uploaded file not found: {filepath}"}), 404
+
+        # ---------- WORD CHAPTER TRANSLATOR ----------
+        if template_choice == "chapter_translate":
+            ext = filename.rsplit(".", 1)[-1].lower()
+
+            if ext != "docx":
+                return jsonify({
+                    "error": "Chapter Translator only supports Word .docx files."
+                }), 400
+
+            output_filename = f"translated_chapter_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+            output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
+
+            translate_docx_keep_layout(filepath, output_path)
+
+            return jsonify({
+                "message": "✅ Word chapter translated to French",
+                "download_url": f"/download/{output_filename}",
+            })
 
         file_content = extract_text(filepath)
         if not file_content.strip():
