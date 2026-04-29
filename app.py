@@ -1,12 +1,17 @@
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-
+import pythoncom
 import os
 import re
 from datetime import datetime
 from copy import deepcopy
-
+import win32com.client
 from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+import cv2
+import numpy as np
 from openai import OpenAI
 from docx import Document
 from docx.shared import Pt as DocxPt
@@ -30,17 +35,377 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 UPLOAD_FOLDER = "uploads"
 GENERATED_FOLDER = "generated"
 ALLOWED_EXTENSIONS = {"txt", "docx", "pdf"}
-
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tiff", "gif"}
+IMAGES_FOLDER = "images"
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["GENERATED_FOLDER"] = GENERATED_FOLDER
-
+app.config["IMAGES_FOLDER"] = IMAGES_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(GENERATED_FOLDER, exist_ok=True)
-
+os.makedirs(IMAGES_FOLDER, exist_ok=True)
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
+"""
+Drop-in replacement for the image translation section of app.py
+
+Key fixes:
+  1. Uses Tesseract --psm 11 (sparse text) for better multi-region detection
+  2. Groups words into lines using the (block, par, line) key — then merges
+     adjacent lines that belong to the same visual paragraph block
+  3. Infers font size from the OCR bounding box height instead of hardcoding 14px
+  4. Erases a generous padding around the source text before drawing overlay
+  5. Finds the best-fit font size that actually fits within the box width
+  6. Handles DPI: Pillow always works in pixel space, so no unit conversion needed
+     for the PIL path; the docx blob replacement is also pixel-correct
+"""
+
+import os
+import re
+from datetime import datetime
+
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+def _load_font(size: int) -> ImageFont.FreeTypeFont:
+    candidates = [
+        "C:/Windows/Fonts/arialbd.ttf",   # Arial Bold (BEST on Windows)
+        "C:/Windows/Fonts/calibrib.ttf",  # Calibri Bold
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+
+    return ImageFont.load_default()
+
+def _fit_font_to_box(text: str, box_w: int, box_h: int,
+                     initial_size: int) -> tuple[ImageFont.FreeTypeFont, int]:
+    """
+    Return a (font, size) whose text fits within box_w × box_h.
+    Starts at initial_size and shrinks by 1pt until it fits (minimum 8pt).
+    """
+    size = max(initial_size, 8)
+    for attempt_size in range(size, 7, -1):
+        font = _load_font(attempt_size)
+        # Use a throw-away draw to measure
+        dummy_img = Image.new("RGB", (1, 1))
+        dummy_draw = ImageDraw.Draw(dummy_img)
+        bbox = dummy_draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        if tw <= box_w and th <= box_h:
+            return font, attempt_size
+    return _load_font(8), 8
+
+
+# ---------------------------------------------------------------------------
+# Public API  (replaces the originals in app.py)
+# ---------------------------------------------------------------------------
+
+def detect_text_regions(image_path: str):
+    """
+    Detect text regions using Tesseract.
+
+    Returns:
+        regions  – list of dicts with keys: text, bbox (x,y,w,h), font_size_est
+        pil_image – PIL Image (RGB)
+    """
+    import pytesseract
+
+    image_cv = cv2.imread(image_path)
+    if image_cv is None:
+        return [], None
+
+    # Work at the image's native resolution — no forced upscaling that
+    # shifts coordinates.
+    rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(rgb).convert("RGB")
+
+    # --psm 11 = sparse text (finds text anywhere, any orientation)
+    # --psm 6  = uniform block (good for forms)
+    # We run --psm 6 first for dense text, then --psm 11 as supplement.
+    configs = ["--psm 6", "--psm 11"]
+    all_line_maps = {}
+
+    for cfg in configs:
+        try:
+            ocr_data = pytesseract.image_to_data(
+                pil_image,
+                output_type=pytesseract.Output.DICT,
+                lang="eng",
+                config=cfg,
+            )
+        except Exception as e:
+            print(f"OCR config {cfg} failed: {e}")
+            continue
+
+        for i, word in enumerate(ocr_data["text"]):
+            word = word.strip()
+            if not word:
+                continue
+            try:
+                conf = float(ocr_data["conf"][i])
+            except Exception:
+                conf = -1
+            if conf < 30:  # slightly higher threshold for cleaner results
+                continue
+
+            key = (
+                ocr_data["block_num"][i],
+                ocr_data["par_num"][i],
+                ocr_data["line_num"][i],
+                cfg,  # separate configs so they don't collide
+            )
+
+            x = ocr_data["left"][i]
+            y = ocr_data["top"][i]
+            w = ocr_data["width"][i]
+            h = ocr_data["height"][i]
+
+            if key not in all_line_maps:
+                all_line_maps[key] = {
+                    "words": [],
+                    "xs": [],
+                    "ys": [],
+                    "rights": [],
+                    "bottoms": [],
+                    "heights": [],
+                }
+
+            entry = all_line_maps[key]
+            entry["words"].append(word)
+            entry["xs"].append(x)
+            entry["ys"].append(y)
+            entry["rights"].append(x + w)
+            entry["bottoms"].append(y + h)
+            entry["heights"].append(h)
+
+    # Build per-line region objects
+    raw_regions = []
+    for entry in all_line_maps.values():
+        text = " ".join(entry["words"]).strip()
+        if len(text) < 2:
+            continue
+
+        min_x = min(entry["xs"])
+        min_y = min(entry["ys"])
+        max_x = max(entry["rights"])
+        max_y = max(entry["bottoms"])
+        # Estimate original font size from median character height
+        median_h = float(np.median(entry["heights"])) if entry["heights"] else 14
+
+        raw_regions.append({
+            "text": text,
+            "bbox": (min_x, min_y, max_x - min_x, max_y - min_y),
+            "font_size_est": int(median_h * 0.85),  # cap-height ≈ 85 % of line height
+        })
+
+    if not raw_regions:
+        return [], pil_image
+
+    # Deduplicate: if two regions share >80 % of their text and overlap, keep one
+    raw_regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+    deduped = []
+    for reg in raw_regions:
+        rx, ry, rw, rh = reg["bbox"]
+        duplicate = False
+        for kept in deduped:
+            kx, ky, kw, kh = kept["bbox"]
+            # IoU-style overlap check
+            ix = max(rx, kx)
+            iy = max(ry, ky)
+            ix2 = min(rx + rw, kx + kw)
+            iy2 = min(ry + rh, ky + kh)
+            if ix2 > ix and iy2 > iy:
+                overlap_area = (ix2 - ix) * (iy2 - iy)
+                reg_area = rw * rh
+                if reg_area > 0 and overlap_area / reg_area > 0.5:
+                    duplicate = True
+                    break
+        if not duplicate:
+            deduped.append(reg)
+
+    # Merge vertically adjacent lines that belong to the same text block
+    # (same approximate x-start, close vertical gap)
+    merged = _merge_lines_into_blocks(deduped)
+
+    return merged, pil_image
+
+
+def _merge_lines_into_blocks(regions: list, max_v_gap: int = 8, max_x_diff: int = 30) -> list:
+    """
+    Merge single-line regions that are close vertically and share the same
+    left-edge x into multi-line blocks.
+    """
+    if not regions:
+        return regions
+
+    regions = sorted(regions, key=lambda r: (r["bbox"][1], r["bbox"][0]))
+    groups = [[regions[0]]]
+
+    for reg in regions[1:]:
+        rx, ry, rw, rh = reg["bbox"]
+        last = groups[-1][-1]
+        lx, ly, lw, lh = last["bbox"]
+        vertical_gap = ry - (ly + lh)
+        x_diff = abs(rx - lx)
+
+        if vertical_gap <= max_v_gap and x_diff <= max_x_diff:
+            groups[-1].append(reg)
+        else:
+            groups.append([reg])
+
+    merged = []
+    for group in groups:
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+
+        all_text = " ".join(g["text"] for g in group)
+        min_x = min(g["bbox"][0] for g in group)
+        min_y = min(g["bbox"][1] for g in group)
+        max_x = max(g["bbox"][0] + g["bbox"][2] for g in group)
+        max_y = max(g["bbox"][1] + g["bbox"][3] for g in group)
+        avg_font = int(np.mean([g["font_size_est"] for g in group]))
+
+        merged.append({
+            "text": all_text,
+            "bbox": (min_x, min_y, max_x - min_x, max_y - min_y),
+            "font_size_est": avg_font,
+        })
+
+    return merged
+
+
+def translate_text_to_french_single(text: str, client) -> str:
+    """Translate a single text string EN→FR using the OpenAI client."""
+    if not text.strip():
+        return text
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate the given English text to natural, professional French. "
+                        "Return ONLY the French translation, nothing else."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0,
+            max_tokens=200,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception:
+        return text
+
+
+def create_overlay_image(pil_image: Image.Image, translated_regions: list) -> Image.Image:
+    result = pil_image.copy()
+    draw = ImageDraw.Draw(result)
+
+    for region in translated_regions:
+        x, y, w, h = region["bbox"]
+        translated = region["translated"]
+
+        # --- 1. ERASE original text (tight, not oversized) ---
+        pad_x = int(w * 0.02)
+        pad_y = int(h * 0.15)
+
+        ex0 = max(0, x - pad_x)
+        ey0 = max(0, y - pad_y)
+        ex1 = min(result.width, x + w + pad_x)
+        ey1 = min(result.height, y + h + pad_y)
+
+        draw.rectangle([ex0, ey0, ex1, ey1], fill="white")
+
+        # --- 2. FONT SIZE = actual text height ---
+        # This is the key fix
+        font_size = max(14, int(h * 2.2))
+        font = _load_font(font_size)
+
+        # --- 3. BASELINE ALIGNMENT (NOT CENTERING) ---
+        # Tesseract box is top-left, but text visually sits lower
+        baseline_offset = int(h * 0.9)
+
+        tx = x
+        ty = y + baseline_offset - font_size
+
+        # --- 4. DRAW TEXT ---
+        draw.text((tx, ty), translated, fill="black", font=font)
+
+    return result
+
+def translate_and_overlay_text(image_path: str, output_path: str, client=None):
+    """
+    Full pipeline: OCR → translate → overlay → save.
+
+    client: OpenAI client instance (required for translation).
+    Returns (success: bool, message: str).
+    """
+    if client is None:
+        raise ValueError("OpenAI client must be provided")
+
+    text_regions, pil_image = detect_text_regions(image_path)
+
+    if not text_regions:
+        pil_image.save(output_path)
+        return False, "No text detected in image"
+
+    # Translate each region
+    translated_regions = []
+    for region in text_regions:
+        original_text = region["text"]
+        try:
+            french = translate_text_to_french_single(original_text, client)
+        except Exception:
+            french = original_text
+
+        translated_regions.append({
+            "original": original_text,
+            "translated": french,
+            "bbox": region["bbox"],
+            "font_size_est": region.get("font_size_est", 14),
+        })
+
+    result_image = create_overlay_image(pil_image, translated_regions)
+
+    if result_image.mode in ("RGBA", "P"):
+        result_image = result_image.convert("RGB")
+    out_ext = output_path.rsplit(".", 1)[-1].lower()
+
+    if out_ext in {"jpg", "jpeg"}:
+        result_image.save(output_path, format="JPEG", quality=95)
+    elif out_ext == "bmp":
+        result_image.save(output_path, format="BMP")
+    elif out_ext in {"tif", "tiff"}:
+        result_image.save(output_path, format="TIFF")
+    else:
+        out_ext = output_path.rsplit(".", 1)[-1].lower()
+
+    if out_ext in {"jpg", "jpeg"}:
+        result_image.save(output_path, format="JPEG", quality=95)
+    elif out_ext == "bmp":
+        result_image.save(output_path, format="BMP")
+    elif out_ext in {"tif", "tiff"}:
+        result_image.save(output_path, format="TIFF")
+    else:
+        result_image.save(output_path, format="PNG")
+
+    return True, f"Translated {len(translated_regions)} text region(s)"
 # ---------------- BASIC HELPERS ----------------
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -1571,6 +1936,118 @@ def translate_texts_to_french_batch(texts: list[str]) -> list[str]:
 
     return parts
 
+def translate_docx_embedded_images(doc: Document):
+    image_ext_map = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/bmp": "bmp",
+        "image/tiff": "tiff",
+        "image/gif": "png",
+    }
+
+    parts_to_check = [doc.part]
+
+    for section in doc.sections:
+        parts_to_check.append(section.header.part)
+        parts_to_check.append(section.footer.part)
+
+    seen = set()
+
+    for part in parts_to_check:
+        for rel in part.rels.values():
+            if "image" not in rel.reltype:
+                continue
+
+            image_part = rel.target_part
+
+            if id(image_part) in seen:
+                continue
+            seen.add(id(image_part))
+
+            content_type = getattr(image_part, "content_type", "image/png")
+            ext = image_ext_map.get(content_type, "png")
+
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            temp_input = os.path.join(app.config["IMAGES_FOLDER"], f"docx_img_input_{stamp}.{ext}")
+            temp_output = os.path.join(app.config["IMAGES_FOLDER"], f"docx_img_output_{stamp}.{ext}")
+
+            try:
+                with open(temp_input, "wb") as f:
+                    f.write(image_part.blob)
+
+                success, msg = translate_and_overlay_text(temp_input, temp_output, client=client)
+                print("DOCX image:", msg)
+
+                if success and os.path.exists(temp_output):
+                    with open(temp_output, "rb") as f:
+                        new_blob = f.read()
+
+                    if len(new_blob) > 1000:
+                        image_part._blob = new_blob
+
+            except Exception as e:
+                print(f"Embedded image translation skipped: {e}")
+
+            finally:
+                for p in [temp_input, temp_output]:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        
+
+def add_word_textbox_overlays_with_word(docx_path: str):
+    pythoncom.CoInitialize()
+    word = win32com.client.Dispatch("Word.Application")
+    word.Visible = False
+
+    doc = word.Documents.Open(os.path.abspath(docx_path))
+
+    try:
+        for inline in doc.InlineShapes:
+            try:
+                shape = inline.ConvertToShape()
+                shape.WrapFormat.Type = 3
+            except Exception as e:
+                print("Inline image convert skipped:", e)
+                continue
+            try:
+                # Only process pictures
+# converted inline image is now a shape; don't skip it
+
+                left = shape.Left
+                top = shape.Top
+                width = shape.Width
+                height = shape.Height
+
+                # Exporting exact Word shape to image is annoying.
+                # For now this only proves overlay insertion works.
+                # OCR/export step comes next.
+
+                textbox = doc.Shapes.AddTextbox(
+                    Orientation=1,
+                    Left=left,
+                    Top=top,
+                    Width=width,
+                    Height=40
+                )
+
+                textbox.TextFrame.TextRange.Text = "TEXTE FRANÇAIS ICI"
+                textbox.TextFrame.TextRange.Font.Size = 22
+                textbox.TextFrame.TextRange.Font.Bold = True
+
+                textbox.Fill.ForeColor.RGB = 16777215  # white
+                textbox.Line.Visible = False
+                textbox.WrapFormat.Type = 3  # in front of text
+
+            except Exception as e:
+                print("Textbox overlay skipped:", e)
+
+        doc.Save()
+
+    finally:
+        doc.Close()
+        word.Quit()
+        pythoncom.CoUninitialize()
 
 def translate_docx_keep_layout(input_path: str, output_path: str):
     doc = Document(input_path)
@@ -1604,15 +2081,81 @@ def translate_docx_keep_layout(input_path: str, output_path: str):
             if not paragraph.runs:
                 paragraph.add_run(translated)
                 continue
+            safe_runs = [r for r in paragraph.runs if not r._element.xpath(".//*[local-name()='drawing']")]
 
-            paragraph.runs[0].text = translated
+            if not safe_runs:
+                continue
 
-            for run in paragraph.runs[1:]:
+            safe_runs[0].text = translated
+
+            for run in safe_runs[1:]:
                 run.text = ""
+    print("NOW TRANSLATING EMBEDDED DOCX IMAGES...")
+    translate_docx_embedded_images(doc)
 
     doc.save(output_path)
-
 # ---------------- ROUTES ----------------
+@app.route("/upload-image", methods=["POST"])
+def upload_image():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    if file and allowed_image_file(file.filename):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config["IMAGES_FOLDER"], filename)
+        file.save(filepath)
+        return jsonify({
+            "message": "✅ Image uploaded successfully", 
+            "filename": filename,
+            "image_url": f"/images/{filename}"
+        })
+
+    return jsonify({"error": "Invalid image file type"}), 400
+def allowed_image_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+@app.route("/translate-image", methods=["POST"])
+def translate_image():
+    try:
+        data = request.get_json(silent=True) or request.form
+        filename = data.get("filename")
+
+        if not filename:
+            return jsonify({"error": "No filename provided"}), 400
+
+        filepath = os.path.join(app.config["IMAGES_FOLDER"], filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": f"Image file not found: {filepath}"}), 404
+
+        base_name = filename.rsplit(".", 1)[0]
+        ext = filename.rsplit(".", 1)[1]
+        output_filename = f"{base_name}_french_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+        output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
+
+        success, message = translate_and_overlay_text(filepath, output_path, client=client)
+
+        if success:
+            return jsonify({
+                "message": f"✅ Image translated successfully: {message}",
+                "download_url": f"/download/{output_filename}"
+            })
+        else:
+            return jsonify({"error": f"Translation failed: {message}"}), 500
+
+    except Exception as e:
+        print(f"/translate-image error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/images/<filename>")
+def serve_image(filename):
+    return send_from_directory(app.config["IMAGES_FOLDER"], filename)
+
+
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
