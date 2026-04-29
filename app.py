@@ -6,6 +6,13 @@ import re
 from datetime import datetime
 from copy import deepcopy
 
+import uuid  # ← ADD this import at the top of app.py if not present
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+ 
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 import pytesseract
@@ -115,107 +122,73 @@ def _fit_font_to_box(text: str, box_w: int, box_h: int,
 # ---------------------------------------------------------------------------
 
 def detect_text_regions(image_path: str):
-    """
-    Detect text regions using Tesseract.
-
-    Returns:
-        regions  – list of dicts with keys: text, bbox (x,y,w,h), font_size_est
-        pil_image – PIL Image (RGB)
-    """
     import pytesseract
-
+ 
     image_cv = cv2.imread(image_path)
     if image_cv is None:
         return [], None
-
-    # Work at the image's native resolution — no forced upscaling that
-    # shifts coordinates.
+ 
     rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(rgb).convert("RGB")
-
-    # --psm 11 = sparse text (finds text anywhere, any orientation)
-    # --psm 6  = uniform block (good for forms)
-    # We run --psm 6 first for dense text, then --psm 11 as supplement.
-    configs = ["--psm 6", "--psm 11"]
+ 
     all_line_maps = {}
-
-    for cfg in configs:
-        try:
-            ocr_data = pytesseract.image_to_data(
-                pil_image,
-                output_type=pytesseract.Output.DICT,
-                lang="eng",
-                config=cfg,
-            )
-        except Exception as e:
-            print(f"OCR config {cfg} failed: {e}")
+ 
+    try:
+        ocr_data = pytesseract.image_to_data(
+            pil_image,
+            output_type=pytesseract.Output.DICT,
+            lang="eng",
+            config="--psm 6",          # ← CHANGED: single pass only
+        )
+    except Exception as e:
+        print(f"OCR failed: {e}")
+        return [], pil_image
+ 
+    for i, word in enumerate(ocr_data["text"]):
+        word = word.strip()
+        if not word:
             continue
-
-        for i, word in enumerate(ocr_data["text"]):
-            word = word.strip()
-            if not word:
-                continue
-            try:
-                conf = float(ocr_data["conf"][i])
-            except Exception:
-                conf = -1
-            if conf < 30:  # slightly higher threshold for cleaner results
-                continue
-
-            key = (
-                ocr_data["block_num"][i],
-                ocr_data["par_num"][i],
-                ocr_data["line_num"][i],
-                cfg,  # separate configs so they don't collide
-            )
-
-            x = ocr_data["left"][i]
-            y = ocr_data["top"][i]
-            w = ocr_data["width"][i]
-            h = ocr_data["height"][i]
-
-            if key not in all_line_maps:
-                all_line_maps[key] = {
-                    "words": [],
-                    "xs": [],
-                    "ys": [],
-                    "rights": [],
-                    "bottoms": [],
-                    "heights": [],
-                }
-
-            entry = all_line_maps[key]
-            entry["words"].append(word)
-            entry["xs"].append(x)
-            entry["ys"].append(y)
-            entry["rights"].append(x + w)
-            entry["bottoms"].append(y + h)
-            entry["heights"].append(h)
-
-    # Build per-line region objects
+        try:
+            conf = float(ocr_data["conf"][i])
+        except Exception:
+            conf = -1
+        if conf < 30:
+            continue
+ 
+        key = (ocr_data["block_num"][i], ocr_data["par_num"][i], ocr_data["line_num"][i])
+ 
+        x = ocr_data["left"][i]
+        y = ocr_data["top"][i]
+        w = ocr_data["width"][i]
+        h = ocr_data["height"][i]
+ 
+        if key not in all_line_maps:
+            all_line_maps[key] = {"words": [], "xs": [], "ys": [],
+                                  "rights": [], "bottoms": [], "heights": []}
+ 
+        entry = all_line_maps[key]
+        entry["words"].append(word)
+        entry["xs"].append(x);    entry["ys"].append(y)
+        entry["rights"].append(x + w); entry["bottoms"].append(y + h)
+        entry["heights"].append(h)
+ 
     raw_regions = []
     for entry in all_line_maps.values():
         text = " ".join(entry["words"]).strip()
         if len(text) < 2:
             continue
-
-        min_x = min(entry["xs"])
-        min_y = min(entry["ys"])
-        max_x = max(entry["rights"])
-        max_y = max(entry["bottoms"])
-        # Estimate original font size from median character height
+        min_x, min_y = min(entry["xs"]), min(entry["ys"])
+        max_x, max_y = max(entry["rights"]), max(entry["bottoms"])
         median_h = float(np.median(entry["heights"])) if entry["heights"] else 14
-
         raw_regions.append({
             "text": text,
             "bbox": (min_x, min_y, max_x - min_x, max_y - min_y),
-            "font_size_est": int(median_h * 0.85),  # cap-height ≈ 85 % of line height
+            "font_size_est": int(median_h * 0.85),
         })
-
+ 
     if not raw_regions:
         return [], pil_image
-
-    # Deduplicate: if two regions share >80 % of their text and overlap, keep one
+ 
     raw_regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
     deduped = []
     for reg in raw_regions:
@@ -223,26 +196,17 @@ def detect_text_regions(image_path: str):
         duplicate = False
         for kept in deduped:
             kx, ky, kw, kh = kept["bbox"]
-            # IoU-style overlap check
-            ix = max(rx, kx)
-            iy = max(ry, ky)
-            ix2 = min(rx + rw, kx + kw)
-            iy2 = min(ry + rh, ky + kh)
+            ix = max(rx, kx); iy = max(ry, ky)
+            ix2 = min(rx+rw, kx+kw); iy2 = min(ry+rh, ky+kh)
             if ix2 > ix and iy2 > iy:
-                overlap_area = (ix2 - ix) * (iy2 - iy)
-                reg_area = rw * rh
-                if reg_area > 0 and overlap_area / reg_area > 0.5:
-                    duplicate = True
-                    break
+                if rw*rh > 0 and (ix2-ix)*(iy2-iy) / (rw*rh) > 0.5:
+                    duplicate = True; break
         if not duplicate:
             deduped.append(reg)
-
-    # Merge vertically adjacent lines that belong to the same text block
-    # (same approximate x-start, close vertical gap)
-    merged = _merge_lines_into_blocks(deduped)
-
-    return merged, pil_image
-
+ 
+    return _merge_lines_into_blocks(deduped), pil_image
+ 
+ 
 
 def _merge_lines_into_blocks(regions: list, max_v_gap: int = 8, max_x_diff: int = 30) -> list:
     """
@@ -289,31 +253,105 @@ def _merge_lines_into_blocks(regions: list, max_v_gap: int = 8, max_x_diff: int 
     return merged
 
 
+import time
+
 def translate_text_to_french_single(text: str, client) -> str:
-    """Translate a single text string EN→FR using the OpenAI client."""
     if not text.strip():
         return text
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Translate the given English text to natural, professional French. "
-                        "Return ONLY the French translation, nothing else."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            temperature=0,
-            max_tokens=200,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception:
-        return text
 
+    for attempt in range(3):  # retry up to 3 times
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Translate the given English text to natural, professional French. "
+                            "Return ONLY the French translation, nothing else."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                temperature=0,
+                max_tokens=200,
+                timeout=30,  # 🔥 prevents hanging
+            )
 
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            print(f"Retry {attempt+1} failed: {e}")
+            time.sleep(2)
+
+    return text  # fallback if all retries fail
+def translate_image_regions_to_french_batch(texts: list, client) -> list:
+    import time as _time
+ 
+    # ← CHANGED: collapse internal newlines so the separator never breaks
+    clean_texts = [t.replace("\n", " ").strip() if t else "" for t in texts]
+ 
+    if not any(t.strip() for t in clean_texts):
+        return clean_texts
+ 
+    joined = "\n---REGION-END---\n".join(clean_texts)
+ 
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Translate each English OCR text region into natural French. "
+                            "Do not skip short labels, headings, all-caps words, or single words. "
+                            "Return ONLY the translated regions, one per line group. "
+                            "Keep every region separated exactly with ---REGION-END---. "
+                            "Never add extra ---REGION-END--- separators."
+                        ),
+                    },
+                    {"role": "user", "content": joined},
+                ],
+                temperature=0,
+                timeout=30,
+            )
+ 
+            translated = response.choices[0].message.content or joined
+            parts = [p.strip() for p in translated.split("---REGION-END---")]
+ 
+            if len(parts) == len(clean_texts):
+                return parts
+ 
+            print(f"Image batch mismatch: expected {len(clean_texts)}, got {len(parts)}. Falling back to per-region.")
+            # ← CHANGED: fall back per-region instead of returning originals
+            break
+ 
+        except Exception as e:
+            print(f"Image batch translation retry {attempt + 1} failed: {e}")
+            _time.sleep(1)
+ 
+    # Per-region fallback
+    results = []
+    for text in clean_texts:
+        if not text.strip():
+            results.append(text)
+            continue
+        try:
+            r = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Translate to French. Return only the translation."},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0,
+                timeout=15,
+            )
+            results.append(r.choices[0].message.content.strip())
+        except Exception:
+            results.append(text)
+    return results
+ 
 def create_overlay_image(pil_image: Image.Image, translated_regions: list) -> Image.Image:
     result = pil_image.copy()
     draw = ImageDraw.Draw(result)
@@ -321,82 +359,66 @@ def create_overlay_image(pil_image: Image.Image, translated_regions: list) -> Im
     for region in translated_regions:
         x, y, w, h = region["bbox"]
         translated = region["translated"]
+        if not translated:
+            continue
 
-        # --- 1. ERASE original text (tight, not oversized) ---
-        pad_x = int(w * 0.02)
-        pad_y = int(h * 0.15)
-
+        # --- 1. ERASE: generous padding to fully cover original text ---
+        pad_x = max(4, int(w * 0.04))
+        pad_y = max(4, int(h * 0.35))          # ← was 0.15, too tight
         ex0 = max(0, x - pad_x)
         ey0 = max(0, y - pad_y)
-        ex1 = min(result.width, x + w + pad_x)
+        ex1 = min(result.width,  x + w + pad_x)
         ey1 = min(result.height, y + h + pad_y)
-
         draw.rectangle([ex0, ey0, ex1, ey1], fill="white")
 
-        # --- 2. FONT SIZE = actual text height ---
-        # This is the key fix
-        font_size = max(14, int(h * 2.2))
-        font = _load_font(font_size)
+        # --- 2. FONT SIZE = bbox height directly (not × 2.2) ---
+        font_size = max(8, int(h * 0.85))       # ← was h * 2.2, way too big
+        font, font_size = _fit_font_to_box(translated, w, h, font_size)
 
-        # --- 3. BASELINE ALIGNMENT (NOT CENTERING) ---
-        # Tesseract box is top-left, but text visually sits lower
-        baseline_offset = int(h * 0.9)
-
-        tx = x
-        ty = y + baseline_offset - font_size
-
-        # --- 4. DRAW TEXT ---
-        draw.text((tx, ty), translated, fill="black", font=font)
+        # --- 3. DRAW at top-left of the original bbox (simple, correct) ---
+        draw.text((x, y), translated, fill="black", font=font)
 
     return result
 
 def translate_and_overlay_text(image_path: str, output_path: str, client=None):
-    """
-    Full pipeline: OCR → translate → overlay → save.
-
-    client: OpenAI client instance (required for translation).
-    Returns (success: bool, message: str).
-    """
     if client is None:
         raise ValueError("OpenAI client must be provided")
-
+ 
     text_regions, pil_image = detect_text_regions(image_path)
-
+ 
+    # pil_image can be None if cv2.imread failed (bad path / unsupported format)
+    if pil_image is None:
+        return False, f"Could not read image: {image_path}"
+ 
     if not text_regions:
-        pil_image.save(output_path)
-        return False, "No text detected in image"
-
-    # Translate each region
-    translated_regions = []
-    for region in text_regions:
-        original_text = region["text"]
+        # ← CHANGED: save a copy of the original so the file still lands at output_path
         try:
-            french = translate_text_to_french_single(original_text, client)
-        except Exception:
-            french = original_text
-
+            pil_image.save(output_path)
+        except Exception as e:
+            return False, f"No text detected and could not save copy: {e}"
+        return False, "No text detected in image"
+ 
+    original_texts = [region["text"] for region in text_regions]
+    french_texts = translate_image_regions_to_french_batch(original_texts, client)
+ 
+    translated_regions = []
+    for region, french in zip(text_regions, french_texts):
         translated_regions.append({
-            "original": original_text,
+            "original": region["text"],
             "translated": french,
             "bbox": region["bbox"],
             "font_size_est": region.get("font_size_est", 14),
         })
-
+ 
     result_image = create_overlay_image(pil_image, translated_regions)
-
+ 
+    # ← CHANGED: explicitly close source image before saving result
+    pil_image.close()
+ 
     if result_image.mode in ("RGBA", "P"):
         result_image = result_image.convert("RGB")
+ 
     out_ext = output_path.rsplit(".", 1)[-1].lower()
-
-    if out_ext in {"jpg", "jpeg"}:
-        result_image.save(output_path, format="JPEG", quality=95)
-    elif out_ext == "bmp":
-        result_image.save(output_path, format="BMP")
-    elif out_ext in {"tif", "tiff"}:
-        result_image.save(output_path, format="TIFF")
-    else:
-        out_ext = output_path.rsplit(".", 1)[-1].lower()
-
     if out_ext in {"jpg", "jpeg"}:
         result_image.save(output_path, format="JPEG", quality=95)
     elif out_ext == "bmp":
@@ -405,7 +427,10 @@ def translate_and_overlay_text(image_path: str, output_path: str, client=None):
         result_image.save(output_path, format="TIFF")
     else:
         result_image.save(output_path, format="PNG")
-
+ 
+    # ← CHANGED: close result image explicitly
+    result_image.close()
+ 
     return True, f"Translated {len(translated_regions)} text region(s)"
 # ---------------- BASIC HELPERS ----------------
 def allowed_file(filename: str) -> bool:
@@ -1894,155 +1919,189 @@ def create_ppt_template_presentation(mcqs, output_path):
     except Exception as e:
         print(f"Error creating PPT template presentation: {e}")
         return False
-def translate_texts_to_french_batch(texts: list[str]) -> list[str]:
+def translate_texts_to_french_batch(texts: list) -> list:
+    import time as _time
+ 
     clean_texts = [t if t else "" for t in texts]
-
     if not any(t.strip() for t in clean_texts):
         return clean_texts
-
+ 
     joined = "\n---BLOCK-END---\n".join(clean_texts)
+ 
+    for attempt in range(2):                              # ← CHANGED: 2 tries max
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Translate ALL English text into natural, professional French. "
+                            "Do not skip short words, labels, or headings. "
+                            "Preserve numbers, punctuation, and formatting markers. "
+                            "Keep every block separated exactly with ---BLOCK-END---."
+                        ),
+                    },
+                    {"role": "user", "content": joined},
+                ],
+                temperature=0,
+                timeout=25,                               # ← CHANGED: hard timeout
+            )
+ 
+            translated = response.choices[0].message.content or joined
+            parts = [p.strip() for p in translated.split("---BLOCK-END---")]
+ 
+            if len(parts) == len(clean_texts):
+                return parts
+ 
+            # count mismatch — fall through to per-text fallback below
+            break
+ 
+        except Exception as e:
+            print(f"Batch translate attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                _time.sleep(1)
+ 
+    # Per-text fallback (only reached on mismatch or error)
+    results = []
+    for text in clean_texts:
+        if not text.strip():
+            results.append(text)
+            continue
+        try:
+            r = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Translate to French. Return only the translation."},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0,
+                timeout=15,                               # ← CHANGED
+            )
+            results.append(r.choices[0].message.content.strip())
+        except Exception:
+            results.append(text)   # keep original on failure
+    return results
+ 
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Translate ALL English text into natural, professional French. "
-                    "Write like a polished textbook / DeepL-quality translation. "
-                    "Do not skip short words, labels, headings, titles, or all-caps text. "
-                    "If the standalone word is TEST, translate it as ESSAI. "
-                    "Do not summarize. Do not add notes. "
-                    "Preserve numbers, punctuation, line breaks, and formatting markers. "
-                    "Keep every block separated exactly with ---BLOCK-END---."
-                ),
-            },
-            {"role": "user", "content": joined},
-        ],
-        temperature=0,
-    )
-
-    translated = response.choices[0].message.content or joined
-    parts = [p.strip() for p in translated.split("---BLOCK-END---")]
-
-    if len(parts) != len(clean_texts):
-        # fallback: translate one by one instead of silently ignoring
-        fixed = []
-        for text in clean_texts:
-            if text.strip():
-                fixed.append(translate_texts_to_french_batch([text])[0])
-            else:
-                fixed.append(text)
-        return fixed
-
-    return parts
-
-def translate_docx_embedded_images(doc: Document):
+def translate_docx_embedded_images(doc):
     image_ext_map = {
-        "image/png": "png",
-        "image/jpeg": "jpg",
-        "image/jpg": "jpg",
-        "image/bmp": "bmp",
-        "image/tiff": "tiff",
-        "image/gif": "png",
+        "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+        "image/bmp": "bmp", "image/tiff": "tiff", "image/gif": "png",
     }
-
+ 
     parts_to_check = [doc.part]
-
     for section in doc.sections:
         parts_to_check.append(section.header.part)
         parts_to_check.append(section.footer.part)
-
+ 
+    image_jobs = []
     seen = set()
-
     for part in parts_to_check:
         for rel in part.rels.values():
             if "image" not in rel.reltype:
                 continue
-
             image_part = rel.target_part
-
             if id(image_part) in seen:
                 continue
             seen.add(id(image_part))
-
             content_type = getattr(image_part, "content_type", "image/png")
             ext = image_ext_map.get(content_type, "png")
-
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            temp_input = os.path.join(app.config["IMAGES_FOLDER"], f"docx_img_input_{stamp}.{ext}")
-            temp_output = os.path.join(app.config["IMAGES_FOLDER"], f"docx_img_output_{stamp}.{ext}")
-
-            try:
-                with open(temp_input, "wb") as f:
-                    f.write(image_part.blob)
-
-                success, msg = translate_and_overlay_text(temp_input, temp_output, client=client)
-                print("DOCX image:", msg)
-
-                if success and os.path.exists(temp_output):
-                    with open(temp_output, "rb") as f:
-                        new_blob = f.read()
-
-                    if len(new_blob) > 1000:
-                        image_part._blob = new_blob
-
-            except Exception as e:
-                print(f"Embedded image translation skipped: {e}")
-
-            finally:
-                for p in [temp_input, temp_output]:
+            image_jobs.append((image_part, ext))
+ 
+    if not image_jobs:
+        return
+ 
+    def process_image(job):
+        image_part, ext = job
+        # ← CHANGED: uuid avoids any filename collision between threads
+        uid = uuid.uuid4().hex
+        temp_input  = os.path.join(app.config["IMAGES_FOLDER"], f"img_in_{uid}.{ext}")
+        temp_output = os.path.join(app.config["IMAGES_FOLDER"], f"img_out_{uid}.{ext}")
+        new_blob = None
+ 
+        try:
+            with open(temp_input, "wb") as f:
+                f.write(image_part.blob)
+ 
+            success, msg = translate_and_overlay_text(temp_input, temp_output, client=client)
+            print("DOCX image:", msg)
+ 
+            # ← CHANGED: read blob INSIDE the try, before finally cleans up
+            if success and os.path.exists(temp_output):
+                with open(temp_output, "rb") as f:
+                    new_blob = f.read()
+ 
+        except Exception as e:
+            print(f"Embedded image translation skipped: {e}")
+ 
+        finally:
+            # ← CHANGED: delete files one at a time with individual guards
+            for p in [temp_input, temp_output]:
+                try:
                     if os.path.exists(p):
                         os.remove(p)
-                        
+                except OSError as e:
+                    print(f"Could not delete temp file {p}: {e}")
+ 
+        # Return outside finally so the blob is never at risk
+        if new_blob and len(new_blob) > 1000:
+            return image_part, new_blob
+        return None
+ 
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(process_image, job): job for job in image_jobs}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                image_part, new_blob = result
+                image_part._blob = new_blob
 
 def add_word_textbox_overlays_with_word(docx_path: str):
     print("Skipping Word COM overlay; using PIL embedded-image replacement instead.")
     return
 def translate_docx_keep_layout(input_path: str, output_path: str):
+    import time as _time
+ 
     doc = Document(input_path)
-
     paragraphs = []
-
+ 
     def collect_paragraphs_from_container(container):
         for paragraph in container.paragraphs:
             if paragraph.text.strip():
                 paragraphs.append(paragraph)
-
         for table in container.tables:
             for row in table.rows:
                 for cell in row.cells:
                     collect_paragraphs_from_container(cell)
-
+ 
     collect_paragraphs_from_container(doc)
-
     for section in doc.sections:
         collect_paragraphs_from_container(section.header)
         collect_paragraphs_from_container(section.footer)
-
-    batch_size = 30
-
+ 
+    batch_size = 60                                       # ← CHANGED: was 30
+ 
     for i in range(0, len(paragraphs), batch_size):
         batch = paragraphs[i:i + batch_size]
         original_texts = [p.text for p in batch]
         translated_texts = translate_texts_to_french_batch(original_texts)
-
+ 
         for paragraph, translated in zip(batch, translated_texts):
             if not paragraph.runs:
                 paragraph.add_run(translated)
                 continue
-            safe_runs = [r for r in paragraph.runs if not r._element.xpath(".//*[local-name()='drawing']")]
-
+            safe_runs = [r for r in paragraph.runs
+                         if not r._element.xpath(".//*[local-name()='drawing']")]
             if not safe_runs:
                 continue
-
             safe_runs[0].text = translated
-
             for run in safe_runs[1:]:
                 run.text = ""
-    print("NOW TRANSLATING EMBEDDED DOCX IMAGES...")
-    translate_docx_embedded_images(doc)
-
+ 
+    print("NOW TRANSLATING EMBEDDED DOCX IMAGES (parallel)...")
+    translate_docx_embedded_images(doc)                   # ← now parallel
+ 
     doc.save(output_path)
 # ---------------- ROUTES ----------------
 @app.route("/upload-image", methods=["POST"])
@@ -2098,7 +2157,7 @@ def translate_image():
 
     except Exception as e:
         print(f"/translate-image error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"Generation failed: {type(e).__name__}: {str(e)}"}), 500
 
 
 @app.route("/images/<filename>")
@@ -2370,7 +2429,7 @@ Rules:
 
     except Exception as e:
         print(f"/generate error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"Generation failed: {type(e).__name__}: {str(e)}"}), 500
 
 
 @app.route("/download/<filename>")
