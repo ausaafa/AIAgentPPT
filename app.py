@@ -1,15 +1,16 @@
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-import pythoncom
+
 import os
 import re
 from datetime import datetime
 from copy import deepcopy
-import win32com.client
+
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+if os.name == "nt":
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 import cv2
 import numpy as np
 from openai import OpenAI
@@ -1996,59 +1997,8 @@ def translate_docx_embedded_images(doc: Document):
                         
 
 def add_word_textbox_overlays_with_word(docx_path: str):
-    pythoncom.CoInitialize()
-    word = win32com.client.Dispatch("Word.Application")
-    word.Visible = False
-
-    doc = word.Documents.Open(os.path.abspath(docx_path))
-
-    try:
-        for inline in doc.InlineShapes:
-            try:
-                shape = inline.ConvertToShape()
-                shape.WrapFormat.Type = 3
-            except Exception as e:
-                print("Inline image convert skipped:", e)
-                continue
-            try:
-                # Only process pictures
-# converted inline image is now a shape; don't skip it
-
-                left = shape.Left
-                top = shape.Top
-                width = shape.Width
-                height = shape.Height
-
-                # Exporting exact Word shape to image is annoying.
-                # For now this only proves overlay insertion works.
-                # OCR/export step comes next.
-
-                textbox = doc.Shapes.AddTextbox(
-                    Orientation=1,
-                    Left=left,
-                    Top=top,
-                    Width=width,
-                    Height=40
-                )
-
-                textbox.TextFrame.TextRange.Text = "TEXTE FRANÇAIS ICI"
-                textbox.TextFrame.TextRange.Font.Size = 22
-                textbox.TextFrame.TextRange.Font.Bold = True
-
-                textbox.Fill.ForeColor.RGB = 16777215  # white
-                textbox.Line.Visible = False
-                textbox.WrapFormat.Type = 3  # in front of text
-
-            except Exception as e:
-                print("Textbox overlay skipped:", e)
-
-        doc.Save()
-
-    finally:
-        doc.Close()
-        word.Quit()
-        pythoncom.CoUninitialize()
-
+    print("Skipping Word COM overlay; using PIL embedded-image replacement instead.")
+    return
 def translate_docx_keep_layout(input_path: str, output_path: str):
     doc = Document(input_path)
 
