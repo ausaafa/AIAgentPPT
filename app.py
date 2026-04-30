@@ -9,8 +9,11 @@ from copy import deepcopy
 import uuid  # ← ADD this import at the top of app.py if not present
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
- 
+
 import cv2
+
+from PIL import Image, ImageDraw, ImageFilter
+
 import numpy as np
 from PIL import Image, ImageDraw
 from dotenv import load_dotenv
@@ -121,6 +124,57 @@ def _fit_font_to_box(text: str, box_w: int, box_h: int,
 # Public API  (replaces the originals in app.py)
 # ---------------------------------------------------------------------------
 
+def _preprocess_for_ocr(pil_image: Image.Image) -> Image.Image:
+    """
+    Sharpen and lightly denoise so Tesseract reads bold/display text better.
+    Returns a new PIL image; does NOT modify the original.
+    """
+    # Convert to OpenCV
+    cv_img = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+ 
+    # Mild denoise (fast, preserves edges on bold text)
+    cv_img = cv2.fastNlMeansDenoisingColored(cv_img, None, 5, 5, 7, 21)
+ 
+    # Unsharp mask — brings out character edges
+    blurred = cv2.GaussianBlur(cv_img, (0, 0), 2.0)
+    cv_img = cv2.addWeighted(cv_img, 1.6, blurred, -0.6, 0)
+ 
+    return Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
+ 
+ 
+def _is_garbage_region(text: str) -> bool:
+    """
+    Return True if the OCR'd text looks like a misread / artifact.
+    Heuristics:
+      - Fewer than 2 real word characters
+      - More than 40 % punctuation / symbols
+      - All single characters separated by spaces (e.g. "H e S a e d")
+      - Repeating character patterns
+    """
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return True
+ 
+    words = stripped.split()
+ 
+    # All single-char "words" → likely broken character segmentation
+    if len(words) > 1 and all(len(w) == 1 for w in words):
+        return True
+ 
+    alpha_count = sum(c.isalpha() for c in stripped)
+    punct_count = sum(not c.isalnum() and not c.isspace() for c in stripped)
+ 
+    # Fewer than 2 alpha characters total
+    if alpha_count < 2:
+        return True
+ 
+    # More than 40 % punctuation
+    if len(stripped) > 0 and punct_count / len(stripped) > 0.40:
+        return True
+ 
+    return False
+ 
+ 
 def detect_text_regions(image_path: str):
     import pytesseract
  
@@ -131,14 +185,17 @@ def detect_text_regions(image_path: str):
     rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(rgb).convert("RGB")
  
+    # ← CHANGED: sharpen before OCR
+    sharpened = _preprocess_for_ocr(pil_image)
+ 
     all_line_maps = {}
  
     try:
         ocr_data = pytesseract.image_to_data(
-            pil_image,
+            sharpened,
             output_type=pytesseract.Output.DICT,
             lang="eng",
-            config="--psm 6",          # ← CHANGED: single pass only
+            config="--psm 6",
         )
     except Exception as e:
         print(f"OCR failed: {e}")
@@ -152,11 +209,10 @@ def detect_text_regions(image_path: str):
             conf = float(ocr_data["conf"][i])
         except Exception:
             conf = -1
-        if conf < 30:
+        if conf < 50:                           # ← CHANGED: was 30
             continue
  
         key = (ocr_data["block_num"][i], ocr_data["par_num"][i], ocr_data["line_num"][i])
- 
         x = ocr_data["left"][i]
         y = ocr_data["top"][i]
         w = ocr_data["width"][i]
@@ -165,21 +221,23 @@ def detect_text_regions(image_path: str):
         if key not in all_line_maps:
             all_line_maps[key] = {"words": [], "xs": [], "ys": [],
                                   "rights": [], "bottoms": [], "heights": []}
- 
-        entry = all_line_maps[key]
-        entry["words"].append(word)
-        entry["xs"].append(x);    entry["ys"].append(y)
-        entry["rights"].append(x + w); entry["bottoms"].append(y + h)
-        entry["heights"].append(h)
+        e = all_line_maps[key]
+        e["words"].append(word)
+        e["xs"].append(x);     e["ys"].append(y)
+        e["rights"].append(x + w); e["bottoms"].append(y + h)
+        e["heights"].append(h)
  
     raw_regions = []
     for entry in all_line_maps.values():
         text = " ".join(entry["words"]).strip()
-        if len(text) < 2:
+        if _is_garbage_region(text):            # ← CHANGED: garbage filter
+            print(f"  [OCR filter] skipped garbage region: {repr(text)}")
             continue
+ 
         min_x, min_y = min(entry["xs"]), min(entry["ys"])
         max_x, max_y = max(entry["rights"]), max(entry["bottoms"])
         median_h = float(np.median(entry["heights"])) if entry["heights"] else 14
+ 
         raw_regions.append({
             "text": text,
             "bbox": (min_x, min_y, max_x - min_x, max_y - min_y),
@@ -196,17 +254,15 @@ def detect_text_regions(image_path: str):
         duplicate = False
         for kept in deduped:
             kx, ky, kw, kh = kept["bbox"]
-            ix = max(rx, kx); iy = max(ry, ky)
+            ix  = max(rx, kx); iy  = max(ry, ky)
             ix2 = min(rx+rw, kx+kw); iy2 = min(ry+rh, ky+kh)
-            if ix2 > ix and iy2 > iy:
-                if rw*rh > 0 and (ix2-ix)*(iy2-iy) / (rw*rh) > 0.5:
+            if ix2 > ix and iy2 > iy and rw*rh > 0:
+                if (ix2-ix)*(iy2-iy) / (rw*rh) > 0.5:
                     duplicate = True; break
         if not duplicate:
             deduped.append(reg)
  
     return _merge_lines_into_blocks(deduped), pil_image
- 
- 
 
 def _merge_lines_into_blocks(regions: list, max_v_gap: int = 8, max_x_diff: int = 30) -> list:
     """
@@ -275,7 +331,7 @@ def translate_text_to_french_single(text: str, client) -> str:
                 ],
                 temperature=0,
                 max_tokens=200,
-                timeout=30,  # 🔥 prevents hanging
+                timeout=50,  # 🔥 prevents hanging
             )
 
             return response.choices[0].message.content.strip()
@@ -358,25 +414,56 @@ def create_overlay_image(pil_image: Image.Image, translated_regions: list) -> Im
 
     for region in translated_regions:
         x, y, w, h = region["bbox"]
-        translated = region["translated"]
+        translated = (region["translated"] or "").strip()
+
         if not translated:
             continue
 
-        # --- 1. ERASE: generous padding to fully cover original text ---
-        pad_x = max(4, int(w * 0.04))
-        pad_y = max(4, int(h * 0.35))          # ← was 0.15, too tight
+        # Dynamic padding based on original box size
+        pad_x = max(4, int(w * 0.08))
+        pad_y = max(3, int(h * 0.35))
+
         ex0 = max(0, x - pad_x)
         ey0 = max(0, y - pad_y)
-        ex1 = min(result.width,  x + w + pad_x)
+        ex1 = min(result.width, x + w + pad_x)
         ey1 = min(result.height, y + h + pad_y)
+
+        erase_w = ex1 - ex0
+        erase_h = ey1 - ey0
+
+        # Cover original text
         draw.rectangle([ex0, ey0, ex1, ey1], fill="white")
 
-        # --- 2. FONT SIZE = bbox height directly (not × 2.2) ---
-        font_size = max(8, int(h * 0.85))       # ← was h * 2.2, way too big
-        font, font_size = _fit_font_to_box(translated, w, h, font_size)
+        # Try largest possible font that fits the actual erased box
+        best_font = None
+        best_bbox = None
 
-        # --- 3. DRAW at top-left of the original bbox (simple, correct) ---
-        draw.text((x, y), translated, fill="black", font=font)
+        max_size = max(10, int(max(erase_h * 0.95, pil_image.height * 0.045)))
+        min_size = 6
+
+        for size in range(max_size, min_size - 1, -1):
+            font = _load_font(size)
+            bbox = draw.textbbox((0, 0), translated, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+
+            if text_w <= erase_w * 0.96 and text_h <= erase_h * 0.90:
+                best_font = font
+                best_bbox = bbox
+                break
+
+        if best_font is None:
+            best_font = _load_font(min_size)
+            best_bbox = draw.textbbox((0, 0), translated, font=best_font)
+
+        text_w = best_bbox[2] - best_bbox[0]
+        text_h = best_bbox[3] - best_bbox[1]
+
+        # Center inside the erased original region
+        draw_x = int(ex0 + (erase_w - text_w) / 2)
+        draw_y = int(ey0 + (erase_h - text_h) / 2 - best_bbox[1])
+
+        draw.text((draw_x, draw_y), translated, fill="black", font=best_font)
 
     return result
 
@@ -1945,7 +2032,7 @@ def translate_texts_to_french_batch(texts: list) -> list:
                     {"role": "user", "content": joined},
                 ],
                 temperature=0,
-                timeout=25,                               # ← CHANGED: hard timeout
+                timeout=45,                               # ← CHANGED: hard timeout
             )
  
             translated = response.choices[0].message.content or joined
@@ -2001,7 +2088,16 @@ def translate_docx_embedded_images(doc):
         for rel in part.rels.values():
             if "image" not in rel.reltype:
                 continue
-            image_part = rel.target_part
+
+            if getattr(rel, "is_external", False):
+                print("Skipping external image relationship")
+                continue
+
+            try:
+                image_part = rel.target_part
+            except Exception as e:
+                print(f"Skipping unreadable image relationship: {e}")
+                continue
             if id(image_part) in seen:
                 continue
             seen.add(id(image_part))
@@ -2079,9 +2175,17 @@ def translate_docx_keep_layout(input_path: str, output_path: str):
     for section in doc.sections:
         collect_paragraphs_from_container(section.header)
         collect_paragraphs_from_container(section.footer)
- 
-    batch_size = 60                                       # ← CHANGED: was 30
- 
+
+    # Collect Word text boxes / shapes
+    from docx.text.paragraph import Paragraph
+
+    for txbx in doc.element.xpath(".//*[local-name()='txbxContent']"):
+        for p_el in txbx.xpath(".//*[local-name()='p']"):
+            p = Paragraph(p_el, doc)
+            if p.text.strip():
+                paragraphs.append(p)
+
+    batch_size = 60
     for i in range(0, len(paragraphs), batch_size):
         batch = paragraphs[i:i + batch_size]
         original_texts = [p.text for p in batch]
