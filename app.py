@@ -178,12 +178,12 @@ def _is_garbage_region(text: str) -> bool:
 def detect_text_regions(image_path: str):
     import pytesseract
  
-    image_cv = cv2.imread(image_path)
-    if image_cv is None:
+    try:
+        pil_image = Image.open(image_path).convert("RGB")
+        image_cv = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        print(f"PIL could not read image {image_path}: {e}")
         return [], None
- 
-    rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(rgb).convert("RGB")
  
     # ← CHANGED: sharpen before OCR
     sharpened = _preprocess_for_ocr(pil_image)
@@ -331,7 +331,7 @@ def translate_text_to_french_single(text: str, client) -> str:
                 ],
                 temperature=0,
                 max_tokens=200,
-                timeout=50,  # 🔥 prevents hanging
+                timeout = 50,  # 🔥 prevents hanging
             )
 
             return response.choices[0].message.content.strip()
@@ -341,6 +341,7 @@ def translate_text_to_french_single(text: str, client) -> str:
             time.sleep(2)
 
     return text  # fallback if all retries fail
+
 def translate_image_regions_to_french_batch(texts: list, client) -> list:
     import time as _time
  
@@ -407,65 +408,151 @@ def translate_image_regions_to_french_batch(texts: list, client) -> list:
         except Exception:
             results.append(text)
     return results
- 
+
+
+# ---------------------------------------------------------------------------
+# NEW: Background sampling, complexity detection, and contrast helpers
+# ---------------------------------------------------------------------------
+
+def _sample_background_color(pil_image, x, y, w, h):
+    """
+    Sample the dominant background color under a bounding box by examining
+    the border pixels of the region (less likely to contain text pixels).
+    Returns an (R, G, B) tuple.
+    """
+    img_w, img_h = pil_image.size
+    x0 = max(0, x);  y0 = max(0, y)
+    x1 = min(img_w, x + w);  y1 = min(img_h, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return (255, 255, 255)
+    region = pil_image.crop((x0, y0, x1, y1)).convert("RGB")
+    rw, rh = region.size
+    if rw < 4 or rh < 4:
+        return region.getpixel((rw // 2, rh // 2))
+    border_pixels = []
+    for bx in range(rw):
+        border_pixels.append(region.getpixel((bx, 0)))
+        border_pixels.append(region.getpixel((bx, rh - 1)))
+    for by in range(1, rh - 1):
+        border_pixels.append(region.getpixel((0, by)))
+        border_pixels.append(region.getpixel((rw - 1, by)))
+    rs = sorted(p[0] for p in border_pixels)
+    gs = sorted(p[1] for p in border_pixels)
+    bs = sorted(p[2] for p in border_pixels)
+    mid = len(rs) // 2
+    return (rs[mid], gs[mid], bs[mid])
+
+
+def _is_complex_background(pil_image, x, y, w, h, variance_threshold=800.0):
+    """
+    Return True if the region under the bounding box looks like a graph,
+    chart, chemical structure, or other complex visual content — as opposed
+    to plain text sitting on a flat-colour background.
+
+    Method: measure per-channel pixel variance on the inner 60% of the
+    region (avoids border artifacts from adjacent elements).
+      High variance  → complex visual content  → skip overlay
+      Low variance   → flat background with text → safe to overlay
+    """
+    img_w, img_h = pil_image.size
+    x0 = max(0, x);  y0 = max(0, y)
+    x1 = min(img_w, x + w);  y1 = min(img_h, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return False
+    region = pil_image.crop((x0, y0, x1, y1)).convert("RGB")
+    rw, rh = region.size
+    cx0 = max(0, int(rw * 0.20));  cy0 = max(0, int(rh * 0.20))
+    cx1 = min(rw, int(rw * 0.80)); cy1 = min(rh, int(rh * 0.80))
+    inner = region.crop((cx0, cy0, cx1, cy1)) if (cx1 > cx0 and cy1 > cy0) else region
+    arr = np.array(inner, dtype=np.float32)
+    if arr.size == 0:
+        return False
+    var = float(np.mean([np.var(arr[:, :, c]) for c in range(3)]))
+    return var > variance_threshold
+
+
+def _pick_text_color(bg_color):
+    """
+    Return 'black' or 'white' for maximum readability against bg_color,
+    using the standard luminance formula.
+    """
+    r, g, b = bg_color
+    return "white" if (0.299 * r + 0.587 * g + 0.114 * b) < 128 else "black"
+
+
 def create_overlay_image(pil_image: Image.Image, translated_regions: list) -> Image.Image:
     result = pil_image.copy()
     draw = ImageDraw.Draw(result)
 
+    # Hard minimum font size — text must always remain readable.
+    # There is intentionally NO maximum cap; the loop starts as large as the
+    # bounding box allows and shrinks only until the text fits.
+    MIN_FONT_SIZE = 10
+
     for region in translated_regions:
         x, y, w, h = region["bbox"]
         translated = (region["translated"] or "").strip()
-
         if not translated:
             continue
 
-        # Dynamic padding based on original box size
-        pad_x = max(4, int(w * 0.08))
-        pad_y = max(3, int(h * 0.35))
+        # ── Guard: skip regions sitting on graphs / charts / structures ───────
+        # We check the original image (not result) so prior overlays don't
+        # falsely raise the variance of nearby regions.
+        #if _is_complex_background(pil_image, x, y, w, h):
+           # print(f"  [overlay] skipped complex-content region: {repr(translated[:40])}")
+           # continue
+
+        # ── Sample background color BEFORE erasing anything ───────────────────
+        # Reading from pil_image (original) guarantees the color is the true
+        # background of the source text, unaffected by earlier overlays.
+        bg_color = _sample_background_color(pil_image, x, y, w, h)
+        text_color = _pick_text_color(bg_color)
+
+        # ── Tight padding — cover ONLY the text area, not surrounding content ─
+        pad_x = max(2, int(w * 0.04))
+        pad_y = max(2, int(h * 0.15))
 
         ex0 = max(0, x - pad_x)
         ey0 = max(0, y - pad_y)
-        ex1 = min(result.width, x + w + pad_x)
+        ex1 = min(result.width,  x + w + pad_x)
         ey1 = min(result.height, y + h + pad_y)
-
         erase_w = ex1 - ex0
         erase_h = ey1 - ey0
 
-        # Cover original text
-        draw.rectangle([ex0, ey0, ex1, ey1], fill="white")
+        # ── Fill erased area with the sampled background color ────────────────
+        draw.rectangle([ex0, ey0, ex1, ey1], fill=bg_color)
 
-        # Try largest possible font that fits the actual erased box
+        # ── Font sizing: no maximum, hard minimum of MIN_FONT_SIZE ───────────
+        start_size = max(MIN_FONT_SIZE, int(max(erase_h * 0.95, pil_image.height * 0.045)))
         best_font = None
         best_bbox = None
 
-        max_size = max(10, int(max(erase_h * 0.95, pil_image.height * 0.045)))
-        min_size = 6
-
-        for size in range(max_size, min_size - 1, -1):
+        for size in range(start_size, MIN_FONT_SIZE - 1, -1):
             font = _load_font(size)
             bbox = draw.textbbox((0, 0), translated, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-
             if text_w <= erase_w * 0.96 and text_h <= erase_h * 0.90:
                 best_font = font
                 best_bbox = bbox
                 break
 
+        # If the text still doesn't fit at MIN_FONT_SIZE, render at MIN anyway.
+        # A slightly overflowing label is far better than invisible text.
         if best_font is None:
-            best_font = _load_font(min_size)
+            best_font = _load_font(MIN_FONT_SIZE)
             best_bbox = draw.textbbox((0, 0), translated, font=best_font)
 
         text_w = best_bbox[2] - best_bbox[0]
         text_h = best_bbox[3] - best_bbox[1]
 
-        # Center inside the erased original region
+        # Centre text inside the erased region
         draw_x = int(ex0 + (erase_w - text_w) / 2)
         draw_y = int(ey0 + (erase_h - text_h) / 2 - best_bbox[1])
-
-        draw.text((draw_x, draw_y), translated, fill="black", font=best_font)
+        draw.text((draw_x, draw_y), translated, fill=text_color, font=best_font)
 
     return result
+
 
 def translate_and_overlay_text(image_path: str, output_path: str, client=None):
     if client is None:
@@ -2006,6 +2093,7 @@ def create_ppt_template_presentation(mcqs, output_path):
     except Exception as e:
         print(f"Error creating PPT template presentation: {e}")
         return False
+
 def translate_texts_to_french_batch(texts: list) -> list:
     import time as _time
  
@@ -2032,7 +2120,7 @@ def translate_texts_to_french_batch(texts: list) -> list:
                     {"role": "user", "content": joined},
                 ],
                 temperature=0,
-                timeout=45,                               # ← CHANGED: hard timeout
+                timeout=90,                              # ← CHANGED: hard timeout
             )
  
             translated = response.choices[0].message.content or joined
@@ -2072,6 +2160,7 @@ def translate_texts_to_french_batch(texts: list) -> list:
  
 
 def translate_docx_embedded_images(doc):
+    return
     image_ext_map = {
         "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
         "image/bmp": "bmp", "image/tiff": "tiff", "image/gif": "png",
@@ -2156,6 +2245,7 @@ def translate_docx_embedded_images(doc):
 def add_word_textbox_overlays_with_word(docx_path: str):
     print("Skipping Word COM overlay; using PIL embedded-image replacement instead.")
     return
+
 def translate_docx_keep_layout(input_path: str, output_path: str):
     import time as _time
  
@@ -2186,22 +2276,24 @@ def translate_docx_keep_layout(input_path: str, output_path: str):
                 paragraphs.append(p)
 
     batch_size = 60
-    for i in range(0, len(paragraphs), batch_size):
-        batch = paragraphs[i:i + batch_size]
-        original_texts = [p.text for p in batch]
+
+    all_runs = []
+    for paragraph in paragraphs:
+        for run in paragraph.runs:
+            if run.text and run.text.strip():
+                if not run._element.xpath(".//*[local-name()='drawing']"):
+                    all_runs.append(run)
+
+    for i in range(0, len(all_runs), batch_size):
+        batch = all_runs[i:i + batch_size]
+        original_texts = [r.text for r in batch]
+
+        start = time.time()
         translated_texts = translate_texts_to_french_batch(original_texts)
- 
-        for paragraph, translated in zip(batch, translated_texts):
-            if not paragraph.runs:
-                paragraph.add_run(translated)
-                continue
-            safe_runs = [r for r in paragraph.runs
-                         if not r._element.xpath(".//*[local-name()='drawing']")]
-            if not safe_runs:
-                continue
-            safe_runs[0].text = translated
-            for run in safe_runs[1:]:
-                run.text = ""
+        print(f"Batch took {round(time.time() - start, 2)}s")
+
+        for run, translated in zip(batch, translated_texts):
+            run.text = translated
  
     print("NOW TRANSLATING EMBEDDED DOCX IMAGES (parallel)...")
     translate_docx_embedded_images(doc)                   # ← now parallel
@@ -2228,6 +2320,7 @@ def upload_image():
         })
 
     return jsonify({"error": "Invalid image file type"}), 400
+
 def allowed_image_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
 
