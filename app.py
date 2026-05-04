@@ -1567,8 +1567,335 @@ def create_mcq_generator2_exact(mcqs, output_path):
     except Exception as e:
         print(f"MCQ2 ERROR: {e}")
         return False
+def create_mcq_generator3_exact(mcqs, output_path):
+    """
+    MCQ Generator 3
+    - question slide: teal left panel, larger option circles/text
+    - answer slide: centered answer row with checkmark beside answer text
+    - improved auto-scaling
+    """
+    print(f"[MCQ3] Starting: {len(mcqs)} MCQs", flush=True)
 
+    if not PPTX_AVAILABLE:
+        print("[MCQ3] pptx not available", flush=True)
+        return False
 
+    try:
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+
+        TEAL = PptRGBColor(18, 138, 150)
+        GREEN = PptRGBColor(98, 190, 72)
+        WHITE = PptRGBColor(255, 255, 255)
+        OFF_WHITE = PptRGBColor(245, 245, 245)
+        DARK = PptRGBColor(38, 43, 49)
+        MID_GRAY = PptRGBColor(120, 120, 120)
+
+        slide_w = prs.slide_width
+        slide_h = prs.slide_height
+        left_panel_w = Inches(4.0)
+
+        def clean_text(value):
+            value = "" if value is None else str(value)
+            value = value.replace("\x00", "")
+            value = value.replace("\r\n", "\n").replace("\r", "\n")
+            value = " ".join(value.split())
+            return value.strip()
+
+        def ensure_answer_letter(ans):
+            ans = clean_text(ans).upper()
+            return ans if ans in {"A", "B", "C", "D"} else "N/A"
+
+        def strip_option_label(option):
+            option = clean_text(option)
+            if len(option) >= 3 and option[0].upper() in {"A", "B", "C", "D"} and option[1] == ")":
+                return option[3:].strip()
+            return option
+
+        def set_text_frame(tf, ml=0, mr=0, mt=0, mb=0, wrap=True, valign=MSO_VERTICAL_ANCHOR.MIDDLE):
+            tf.clear()
+            tf.word_wrap = wrap
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            tf.vertical_anchor = valign
+            tf.margin_left = Pt(ml)
+            tf.margin_right = Pt(mr)
+            tf.margin_top = Pt(mt)
+            tf.margin_bottom = Pt(mb)
+
+        def add_full_bg(slide, color):
+            bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, slide_w, slide_h)
+            bg.fill.solid()
+            bg.fill.fore_color.rgb = color
+            bg.line.fill.background()
+            return bg
+
+        def add_circle(slide, left, top, size, fill_rgb, text="", text_rgb=WHITE, font_size=22, bold=True):
+            shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, size, size)
+            shp.fill.solid()
+            shp.fill.fore_color.rgb = fill_rgb
+            shp.line.fill.background()
+
+            tf = shp.text_frame
+            set_text_frame(tf, 0, 0, 0, 0)
+
+            p = tf.paragraphs[0]
+            p.text = text
+            p.alignment = PP_ALIGN.CENTER
+            p.font.name = "Arial"
+            p.font.size = Pt(font_size)
+            p.font.bold = bold
+            p.font.color.rgb = text_rgb
+            return shp
+
+        def fit_question_size(text):
+            n = len(clean_text(text))
+            if n > 560:
+                return Pt(14)
+            if n > 480:
+                return Pt(16)
+            if n > 400:
+                return Pt(18)
+            if n > 320:
+                return Pt(20)
+            if n > 250:
+                return Pt(22)
+            if n > 180:
+                return Pt(25)
+            return Pt(30)
+
+        def fit_option_size(text):
+            n = len(clean_text(text))
+            if n > 170:
+                return Pt(17)
+            if n > 130:
+                return Pt(19)
+            if n > 95:
+                return Pt(21)
+            if n > 65:
+                return Pt(24)
+            return Pt(27)
+
+        def fit_answer_size(text):
+            n = len(clean_text(text))
+            if n > 220:
+                return Pt(18)
+            if n > 175:
+                return Pt(20)
+            if n > 135:
+                return Pt(23)
+            if n > 95:
+                return Pt(27)
+            if n > 60:
+                return Pt(32)
+            return Pt(38)
+
+        def fit_explanation_size(text):
+            n = len(clean_text(text))
+            if n > 420:
+                return Pt(11)
+            if n > 320:
+                return Pt(12)
+            if n > 240:
+                return Pt(13)
+            return Pt(15)
+
+        for i, mcq in enumerate(mcqs, start=1):
+            print(f"[MCQ3] Q{i}", flush=True)
+
+            question = clean_text(mcq.get("question", ""))
+            explanation = clean_text(mcq.get("explanation", "")) or "No explanation provided."
+            answer_letter = ensure_answer_letter(mcq.get("answer", ""))
+
+            options = [clean_text(x) for x in ensure_four_options(mcq)]
+            option_texts = [strip_option_label(x) for x in options]
+
+            correct_text = ""
+            if answer_letter in {"A", "B", "C", "D"}:
+                idx = ord(answer_letter) - ord("A")
+                if 0 <= idx < len(option_texts):
+                    correct_text = option_texts[idx]
+
+            # =====================================================
+            # QUESTION SLIDE
+            # =====================================================
+            slide1 = prs.slides.add_slide(prs.slide_layouts[6])
+            add_full_bg(slide1, OFF_WHITE)
+
+            left_panel = slide1.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                0,
+                0,
+                left_panel_w,
+                slide_h,
+            )
+            left_panel.fill.solid()
+            left_panel.fill.fore_color.rgb = TEAL
+            left_panel.line.fill.background()
+
+            add_circle(
+                slide1,
+                Inches(0.42),
+                Inches(0.50),
+                Inches(0.62),
+                WHITE,
+                text=str(i),
+                text_rgb=TEAL,
+                font_size=20,
+            )
+
+            q_box = slide1.shapes.add_textbox(
+                Inches(0.65),
+                Inches(1.05),
+                Inches(3.05),
+                Inches(5.95),
+            )
+            q_tf = q_box.text_frame
+            set_text_frame(q_tf, 0, 0, 0, 0, wrap=True, valign=MSO_VERTICAL_ANCHOR.MIDDLE)
+
+            q_p = q_tf.paragraphs[0]
+            q_p.text = f"{i}. {question}"
+            q_p.alignment = PP_ALIGN.LEFT
+            q_p.font.name = "Arial"
+            q_p.font.size = fit_question_size(question)
+            q_p.font.bold = True
+            q_p.font.color.rgb = WHITE
+
+            # Bigger option circles + bigger option text
+            option_y_positions = [
+                Inches(0.95),
+                Inches(2.25),
+                Inches(3.55),
+                Inches(4.85),
+            ]
+
+            letter_circle_x = Inches(4.38)
+            option_text_x = Inches(5.12)
+            option_text_w = Inches(7.35)
+            option_circle_size = Inches(0.68)
+
+            for idx, opt_text in enumerate(option_texts):
+                label = chr(65 + idx)
+
+                add_circle(
+                    slide1,
+                    letter_circle_x,
+                    option_y_positions[idx] - Inches(0.06),
+                    option_circle_size,
+                    TEAL,
+                    text=label,
+                    text_rgb=WHITE,
+                    font_size=22,
+                )
+
+                tb = slide1.shapes.add_textbox(
+                    option_text_x,
+                    option_y_positions[idx] - Inches(0.08),
+                    option_text_w,
+                    Inches(0.90),
+                )
+                tf = tb.text_frame
+                set_text_frame(tf, 0, 0, 0, 0, wrap=True, valign=MSO_VERTICAL_ANCHOR.MIDDLE)
+
+                p = tf.paragraphs[0]
+                p.text = opt_text
+                p.alignment = PP_ALIGN.LEFT
+                p.font.name = "Arial"
+                p.font.size = fit_option_size(opt_text)
+                p.font.bold = True
+                p.font.color.rgb = DARK
+
+            # =====================================================
+            # ANSWER SLIDE
+            # =====================================================
+            slide2 = prs.slides.add_slide(prs.slide_layouts[6])
+            add_full_bg(slide2, WHITE)
+
+            answer_text = correct_text if correct_text else f"Correct answer: {answer_letter}"
+            answer_font_size = fit_answer_size(answer_text)
+
+            # Centered row: letter circle + answer text + check circle
+            row_left = Inches(0.90)
+            row_top = Inches(2.30)
+            row_width = Inches(11.50)
+            row_height = Inches(1.25)
+
+            answer_letter_size = Inches(0.66)
+            check_size = Inches(0.66)
+
+            add_circle(
+                slide2,
+                row_left,
+                row_top + Inches(0.24),
+                answer_letter_size,
+                GREEN,
+                text=answer_letter if answer_letter in {"A", "B", "C", "D"} else "",
+                text_rgb=WHITE,
+                font_size=22,
+            )
+
+            answer_box_left = row_left + Inches(0.88)
+            answer_box_width = row_width - Inches(1.90)
+
+            answer_box = slide2.shapes.add_textbox(
+                answer_box_left,
+                row_top,
+                answer_box_width,
+                row_height,
+            )
+            ans_tf = answer_box.text_frame
+            set_text_frame(ans_tf, 0, 0, 0, 0, wrap=True, valign=MSO_VERTICAL_ANCHOR.MIDDLE)
+
+            ans_p = ans_tf.paragraphs[0]
+            ans_p.text = answer_text
+            ans_p.alignment = PP_ALIGN.CENTER
+            ans_p.font.name = "Arial"
+            ans_p.font.size = answer_font_size
+            ans_p.font.bold = True
+            ans_p.font.color.rgb = DARK
+
+            # Checkmark directly beside answer text, not diagonally above
+            check_left = answer_box_left + answer_box_width + Inches(0.18)
+
+            add_circle(
+                slide2,
+                check_left,
+                row_top + Inches(0.24),
+                check_size,
+                GREEN,
+                text="✓",
+                text_rgb=WHITE,
+                font_size=24,
+            )
+
+            exp_box = slide2.shapes.add_textbox(
+                Inches(0.85),
+                Inches(6.38),
+                Inches(11.65),
+                Inches(0.62),
+            )
+            exp_tf = exp_box.text_frame
+            set_text_frame(exp_tf, 0, 0, 0, 0, wrap=True, valign=MSO_VERTICAL_ANCHOR.MIDDLE)
+
+            exp_p = exp_tf.paragraphs[0]
+            exp_p.text = explanation
+            exp_p.alignment = PP_ALIGN.CENTER
+            exp_p.font.name = "Arial"
+            exp_p.font.size = fit_explanation_size(explanation)
+            exp_p.font.italic = True
+            exp_p.font.color.rgb = MID_GRAY
+
+        print("[MCQ3] Saving...", flush=True)
+        prs.save(output_path)
+        print(f"[MCQ3] Done — {len(mcqs) * 2} slides", flush=True)
+        return True
+
+    except Exception as e:
+        import traceback
+        print(f"[MCQ3] FAILED: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
+        return False
+    
 def create_vba_template_presentation_mobile(mcqs, output_path):
     if not PPTX_AVAILABLE:
         return False
@@ -2120,7 +2447,7 @@ def translate_texts_to_french_batch(texts: list) -> list:
                     {"role": "user", "content": joined},
                 ],
                 temperature=0,
-                timeout=90,                              # ← CHANGED: hard timeout
+                timeout=45,                              # ← CHANGED: hard timeout
             )
  
             translated = response.choices[0].message.content or joined
@@ -2275,7 +2602,7 @@ def translate_docx_keep_layout(input_path: str, output_path: str):
             if p.text.strip():
                 paragraphs.append(p)
 
-    batch_size = 60
+    batch_size = 35
 
     all_runs = []
     for paragraph in paragraphs:
@@ -2607,6 +2934,8 @@ Rules:
             success = create_vba_template_presentation(mcqs, output_path)
         elif template_choice == "mcq2":
             success = create_mcq_generator2_exact(mcqs, output_path)
+        elif template_choice == "mcq3":
+            success = create_mcq_generator3_exact(mcqs, output_path)
         elif template_choice == "vba_mobile":
             success = create_vba_template_presentation_mobile(mcqs, output_path)
         elif template_choice == "ppt":

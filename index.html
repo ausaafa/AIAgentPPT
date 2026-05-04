@@ -388,6 +388,7 @@ input[type="text"] {
           <option value="cbt">CBT Generator</option>
           <option value="vba">MCQ Generator</option>
           <option value="mcq2">MCQ Generator 2</option>
+          <option value="mcq3">MCQ Generator 3</option>
           <option value="brand_template">Brand/Drug Name Generator</option>
           <option value="brand_template_mobile">Brand/Drug Name (Mobile)</option>
           <option value="vba_mobile">MCQ Generator (Mobile)</option>
@@ -605,6 +606,11 @@ End Sub
     if (selected === "mcq2") {
       document.getElementById("showcaseText").innerHTML =
         "<img src='/static/mcq2.png' style='max-width:100%;max-height:100%;'>";
+      return;
+    }
+    if (selected === "mcq3") {
+      document.getElementById("showcaseText").innerHTML =
+        "<img src='/static/mcq3.png' style='max-width:100%;max-height:100%;'>";
       return;
     }
     // Brand/drug template preview
