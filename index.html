@@ -375,6 +375,7 @@ button { cursor: pointer; }
   display: grid;
   grid-template-rows: minmax(0, 1fr) 62px;
   min-height: 0;
+  min-width: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -658,6 +659,7 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
 .result-card {
   padding: 16px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -716,6 +718,8 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
   gap: 12px;
   padding: 8px 12px;
   margin-bottom: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .file-icon {
@@ -833,8 +837,8 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
 /* FIX 3: Download button inside modals */
 .doc-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 12px;
   padding: 14px;
   border-radius: 14px;
   border: 1px solid #eef2f7;
@@ -851,19 +855,19 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
 
 /* FIX 3: Doc download button — clean inline pill */
 .doc-download-btn {
-  display: block;
-  width: 100%;
-  height: 40px;
-  margin-top: 10px;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 16px;
   border: 1.5px solid var(--blue-border);
   border-radius: 9px;
   background: #ffffff;
   color: var(--blue);
-  font-size: .85rem;
+  font-size: .82rem;
   font-weight: 800;
   cursor: pointer;
   transition: all .15s ease;
-  text-align: center;
+  align-self: center;
+  white-space: nowrap;
 }
 
 .doc-download-btn:hover:not(:disabled) {
@@ -1853,55 +1857,30 @@ function renderFavoritesModal() {
     setOutputStatus('Generating');
     generateBtn.disabled = true;
     generateBtn.textContent = 'Generating...';
-    setProgress(3, 'Sending request', 'Starting...');
 
-    let jobId = null;
-    let sseSource = null;
+    let progress = 8;
+    const totalEstimate = template === 'chapter_translate' ? 55 : template === 'docx_to_html' ? 25 : 35;
+    const startedAt = Date.now();
+    setProgress(progress, 'Preparing document', `Estimated time left: ${totalEstimate} seconds`);
 
-    // Start SSE polling once we have a jobId
-    function startProgressStream(id) {
-      sseSource = new EventSource(`/progress/${id}`);
-      sseSource.onmessage = (e) => {
-        if (!e.data || e.data === '{}') return;
-        try {
-          const info = JSON.parse(e.data);
-          if (info.pct !== undefined) {
-            setProgress(info.pct, info.state || '', info.eta || '');
-          }
-          if (info.pct >= 100) { sseSource.close(); }
-        } catch (_) {}
-      };
-      sseSource.onerror = () => { sseSource.close(); };
-    }
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      const remaining = Math.max(totalEstimate - elapsed, 4);
+      if (progress < 92) progress += Math.max(1, Math.round((92 - progress) / 10));
+      const stage = progress < 35 ? 'Uploading to generator' : progress < 70 ? 'Reading document structure' : 'Formatting output';
+      setProgress(progress, stage, `Estimated time left: ${remaining} seconds`);
+    }, 900);
 
     try {
-      // Fire generate — this blocks until done, but SSE runs in parallel
-      const fetchPromise = fetch('/generate', {
+      const res = await fetch('/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: uploadedFilename,
-          template,
-          cbt_topic: document.getElementById('cbtInputInside') ? document.getElementById('cbtInputInside').value : ''
-        })
+        body: JSON.stringify({ filename: uploadedFilename, template, cbt_topic: document.getElementById('cbtInputInside') ? document.getElementById('cbtInputInside').value : '' })
       });
-
-      // Poll for job_id every 200ms so we can subscribe to SSE ASAP
-      const pollTimer = setInterval(async () => {
-        // job_id comes back in the response — handled after fetch resolves
-      }, 200);
-
-      const res = await fetchPromise;
-      clearInterval(pollTimer);
-      if (sseSource) sseSource.close();
-
       const data = await res.json();
+      clearInterval(interval);
       generateBtn.disabled = false;
       generateBtn.textContent = '✣ Generate';
-
-      if (data.job_id && !jobId) {
-        jobId = data.job_id;
-      }
 
       if (data.download_url) {
         activeDownloadUrl = data.download_url;
@@ -1914,26 +1893,44 @@ function renderFavoritesModal() {
         downloadBtn.textContent = template === 'docx_to_html' ? 'Copy' : 'Download';
 
         if (template === 'docx_to_html') {
+          downloadBtn.dataset.htmlUrl = data.download_url;
           downloadBtn.onclick = async () => {
             panelToast.classList.remove('show');
+            const url = downloadBtn.dataset.htmlUrl;
             try {
-              const htmlRes = await fetch(data.download_url);
+              const htmlRes = await fetch(url);
+              if (!htmlRes.ok) throw new Error('fetch failed');
               const htmlText = await htmlRes.text();
-              await navigator.clipboard.writeText(htmlText);
+              // Try modern clipboard API first, fall back to execCommand
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(htmlText);
+              } else {
+                const ta = document.createElement('textarea');
+                ta.value = htmlText;
+                ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+              }
               showToast('✅ HTML code copied to clipboard', 3500);
-            } catch (err) { showToast('❌ Failed to copy HTML to clipboard', 3500); }
+            } catch (err) {
+              // Last resort: trigger download instead
+              window.location.href = url;
+              showToast('Clipboard unavailable — downloading file instead', 3500);
+            }
           };
         } else {
           downloadBtn.dataset.url = data.download_url;
           downloadBtn.onclick = () => { panelToast.classList.remove('show'); window.location.href = downloadBtn.dataset.url; };
         }
       } else {
-        setProgress(0, 'Generation failed', data.error || 'No download URL returned.');
+        setProgress(0, 'Generation failed', 'No download URL returned.');
         setOutputStatus('Failed');
-        showToast(data.error || 'Generation failed');
+        showToast('Generation failed');
       }
     } catch (error) {
-      if (sseSource) sseSource.close();
+      clearInterval(interval);
       generateBtn.disabled = false;
       generateBtn.textContent = '✣ Generate';
       setProgress(0, 'Generation failed', 'Could not reach backend.');

@@ -1278,7 +1278,7 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
         # Build inner HTML from runs + inline images
         inner = ""
         for child in para._p:
-            tag = etree.QName(child).localname if child.tag != etree.Comment else ""
+            tag = "" if callable(child.tag) else etree.QName(child).localname
             if tag == "r":
                 # Inline images inside the run
                 imgs = get_inline_images(child)
@@ -1393,6 +1393,8 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
     table_idx = 0
 
     for child in body_el:
+        if callable(child.tag):
+            continue
         local = etree.QName(child).localname
         if local == "p":
             body_html += parse_paragraph(doc.paragraphs[para_idx])
@@ -3208,7 +3210,10 @@ Rules:
             output_filename = f"converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
             _set(50, "Embedding images", "~2 seconds")
-            html_output = convert_docx_to_html_faithful(filepath)
+            try:
+                html_output = convert_docx_to_html_faithful(filepath)
+            except Exception as e:
+                return jsonify({"error": f"Conversion failed: {type(e).__name__}: {str(e)}"}), 500
             _set(90, "Writing HTML file", "~1 second")
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(html_output)
