@@ -898,7 +898,56 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
   background: var(--blue);
   box-shadow: 0 12px 26px rgba(20, 87, 255, .22);
 }
+.download-btn:not([disabled]) {
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
 
+.download-btn:not([disabled]):hover {
+  background: #0f49dd;
+  box-shadow: 0 14px 30px rgba(20, 87, 255, .28);
+}
+
+.download-btn:not([disabled]):active {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 6px 14px rgba(20, 87, 255, .22);
+}
+
+.download-btn.copied {
+  background: #16a34a;
+  box-shadow: 0 12px 26px rgba(22, 163, 74, .22);
+}
+
+.download-btn.copying {
+  opacity: .8;
+  cursor: wait;
+}
+.download-btn:not([disabled]) {
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.download-btn:not([disabled]):hover {
+  background: #0f49dd;
+  box-shadow: 0 14px 30px rgba(20, 87, 255, .28);
+}
+
+.download-btn:not([disabled]):active {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 6px 14px rgba(20, 87, 255, .22);
+}
+
+.download-btn.copying {
+  opacity: .82;
+  cursor: wait;
+}
+
+.download-btn.copied {
+  background: #16a34a;
+  box-shadow: 0 12px 26px rgba(22, 163, 74, .22);
+}
 /* FIX 3: Recent card (bottom of result column) */
 .recent-card {
   padding: 12px;
@@ -1834,7 +1883,41 @@ function renderFavoritesModal() {
     previewModalBody.innerHTML = `<iframe class="preview-frame" src="${url}"></iframe>`;
     previewModal.classList.add('show');
   }
+async function copyTextToClipboard(text) {
+  if (!text) {
+    throw new Error('Nothing to copy');
+  }
 
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '0';
+  textarea.style.left = '0';
+  textarea.style.width = '1px';
+  textarea.style.height = '1px';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error('Clipboard copy failed');
+  }
+
+  return true;
+}
   generateBtn.addEventListener('click', async () => {
     const template = templateSelect.value;
     if (template === 'none') { showToast('Please select a template'); return; }
@@ -1892,34 +1975,62 @@ function renderFavoritesModal() {
         downloadBtn.disabled = false;
         downloadBtn.textContent = template === 'docx_to_html' ? 'Copy' : 'Download';
 
-        if (template === 'docx_to_html') {
-          downloadBtn.dataset.htmlUrl = data.download_url;
-          downloadBtn.onclick = async () => {
-            panelToast.classList.remove('show');
-            const url = downloadBtn.dataset.htmlUrl;
-            try {
-              const htmlRes = await fetch(url);
-              if (!htmlRes.ok) throw new Error('fetch failed');
-              const htmlText = await htmlRes.text();
-              // Try modern clipboard API first, fall back to execCommand
-              if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(htmlText);
-              } else {
-                const ta = document.createElement('textarea');
-                ta.value = htmlText;
-                ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-              }
-              showToast('✅ HTML code copied to clipboard', 3500);
-            } catch (err) {
-              // Last resort: trigger download instead
-              window.location.href = url;
-              showToast('Clipboard unavailable — downloading file instead', 3500);
-            }
-          };
+if (template === 'docx_to_html') {
+  downloadBtn.dataset.htmlUrl = data.copy_url || data.download_url;
+  downloadBtn.textContent = 'Copy';
+
+  downloadBtn.onclick = async () => {
+    panelToast.classList.remove('show');
+
+    const url = downloadBtn.dataset.htmlUrl;
+    const originalText = downloadBtn.textContent;
+
+    downloadBtn.classList.add('copying');
+    downloadBtn.classList.add('copying');
+downloadBtn.textContent = 'Copying...';
+
+    try {
+      const htmlRes = await fetch(url, { cache: 'no-store' });
+
+      if (!htmlRes.ok) {
+        throw new Error('Could not load generated HTML');
+      }
+
+      const htmlText = await htmlRes.text();
+
+      await copyTextToClipboard(htmlText);
+
+      downloadBtn.classList.remove('copying');
+      downloadBtn.classList.add('copied');
+      downloadBtn.textContent = 'Copied';
+
+      downloadBtn.classList.remove('copying');
+downloadBtn.classList.add('copied');
+downloadBtn.textContent = 'Copied';
+
+showToast('HTML code copied to clipboard', 2500);
+
+setTimeout(() => {
+  downloadBtn.classList.remove('copied');
+  downloadBtn.textContent = 'Copy';
+}, 1600);
+
+      setTimeout(() => {
+        downloadBtn.classList.remove('copied');
+        downloadBtn.textContent = originalText;
+      }, 1600);
+
+    } catch (err) {
+      console.error('Copy failed:', err);
+      
+     downloadBtn.classList.remove('copying');
+downloadBtn.textContent = 'Copy';
+
+      showToast('Copy failed. Opening generated HTML instead.', 3500);
+      window.open(url, '_blank');
+    }
+  };
+
         } else {
           downloadBtn.dataset.url = data.download_url;
           downloadBtn.onclick = () => { panelToast.classList.remove('show'); window.location.href = downloadBtn.dataset.url; };

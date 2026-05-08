@@ -1253,16 +1253,19 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
             if spacing is not None:
                 before = spacing.get(qn("w:before"))
                 after = spacing.get(qn("w:after"))
+                line = spacing.get(qn("w:line"))
+                line_rule = spacing.get(qn("w:lineRule"))
                 if before:
-                    try:
-                        space_before = f"{round(int(before) / 20)}pt"
-                    except:
-                        pass
+                    try: space_before = f"{round(int(before) / 20)}pt"
+                    except: pass
                 if after:
+                    try: space_after = f"{round(int(after) / 20)}pt"
+                    except: pass
+                if line and line_rule in ("auto", None, ""):
                     try:
-                        space_after = f"{round(int(after) / 20)}pt"
-                    except:
-                        pass
+                        lh = round(int(line) / 240, 2)
+                        p_styles["line-height"] = str(lh)
+                    except: pass
 
             # List detection
             num_pr = ppr.find(qn("w:numPr"))
@@ -1338,8 +1341,39 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
         if list_info:
             ilvl = list_info[1]
             p_styles["padding-left"] = f"{(ilvl + 1) * 24}px"
-            p_styles["list-style-position"] = "inside"
+            p_styles["margin-left"] = f"{(ilvl + 1) * 24}px"
             p_styles["display"] = "list-item"
+            p_styles["list-style-position"] = "outside"
+            # Check if ordered or unordered from numbering XML
+            num_id = list_info[0]
+            try:
+                numbering_part = doc.part.numbering_part
+                num_xml = numbering_part._element
+                ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+                # Find abstract num for this numId
+                num_el = num_xml.find(f'.//{{{ns}}}num[@{{{ns}}}numId="{num_id}"]')
+                if num_el is None:
+                    num_el = next((n for n in num_xml.findall(f'.//{{{ns}}}num') 
+                                if n.get(f'{{{ns}}}numId') == num_id), None)
+                is_ordered = False
+                if num_el is not None:
+                    abs_id_el = num_el.find(f'{{{ns}}}abstractNumId')
+                    if abs_id_el is not None:
+                        abs_id = abs_id_el.get(f'{{{ns}}}val')
+                        abs_el = next((a for a in num_xml.findall(f'.//{{{ns}}}abstractNum')
+                                    if a.get(f'{{{ns}}}abstractNumId') == abs_id), None)
+                        if abs_el is not None:
+                            lvl_el = next((l for l in abs_el.findall(f'.//{{{ns}}}lvl')
+                                        if l.get(f'{{{ns}}}ilvl') == str(ilvl)), None)
+                            if lvl_el is not None:
+                                fmt_el = lvl_el.find(f'{{{ns}}}numFmt')
+                                if fmt_el is not None:
+                                    fmt = fmt_el.get(f'{{{ns}}}val', '')
+                                    is_ordered = fmt in ('decimal', 'lowerLetter', 'upperLetter', 
+                                                        'lowerRoman', 'upperRoman')
+                p_styles["list-style-type"] = "decimal" if is_ordered else "disc"
+            except Exception:
+                p_styles["list-style-type"] = "disc"
 
         style_str = "; ".join(f"{k}: {v}" for k, v in p_styles.items())
         return f'<{html_tag} style="{style_str}">{inner}</{html_tag}>'
@@ -1387,23 +1421,54 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
 
     # --- Main body pass ---
     body_html = ""
-    # Walk the document body XML directly to preserve order of paragraphs + tables
     body_el = doc.element.body
     para_idx = 0
     table_idx = 0
+    pending_list_items = []   # (html_str, is_ordered, ilvl)
+    current_list_type = None  # 'ol' or 'ul'
+
+    def flush_list():
+        nonlocal body_html, pending_list_items, current_list_type
+        if not pending_list_items:
+            return
+        tag = "ol" if current_list_type == "ol" else "ul"
+        body_html += f'<{tag} style="margin:4pt 0; padding-left:0;">'
+        for item_html in pending_list_items:
+            body_html += item_html
+        body_html += f'</{tag}>'
+        pending_list_items = []
+        current_list_type = None
 
     for child in body_el:
         if callable(child.tag):
             continue
         local = etree.QName(child).localname
         if local == "p":
-            body_html += parse_paragraph(doc.paragraphs[para_idx])
+            para = doc.paragraphs[para_idx]
             para_idx += 1
+            # Check if this paragraph is a list item
+            ppr = para._p.find(qn("w:pPr"))
+            is_list = ppr is not None and ppr.find(qn("w:numPr")) is not None
+            if is_list:
+                p_html = parse_paragraph(para)
+                # Detect ol vs ul from list-style-type in the rendered html
+                is_ordered = 'list-style-type: decimal' in p_html
+                new_type = "ol" if is_ordered else "ul"
+                if current_list_type and current_list_type != new_type:
+                    flush_list()
+                current_list_type = new_type
+                pending_list_items.append(p_html)
+            else:
+                flush_list()
+                body_html += parse_paragraph(para)
         elif local == "tbl":
+            flush_list()
             body_html += parse_table(doc.tables[table_idx])
             table_idx += 1
-        # sectPr and others are skipped
 
+    flush_list()
+
+       
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3218,7 +3283,12 @@ Rules:
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(html_output)
             _set(100, "Done", "Complete")
-            return jsonify({"message": "✅ HTML generated successfully", "download_url": f"/download/{output_filename}", "job_id": job_id})
+            return jsonify({
+    "message": "✅ HTML generated successfully",
+    "download_url": f"/download/{output_filename}",
+    "copy_url": f"/raw-html/{output_filename}",
+    "job_id": job_id
+})
 
         # ── All remaining modes need file text ─────────────────────────────
         _set(8, "Extracting text", "~2 seconds")
@@ -3307,7 +3377,20 @@ Rules:
         return jsonify({"error": f"Generation failed: {type(e).__name__}: {str(e)}"}), 500
 
 
+@app.route("/raw-html/<filename>")
+def raw_html_file(filename):
+    safe_name = secure_filename(filename)
+    if not safe_name.lower().endswith(".html"):
+        return jsonify({"error": "Only HTML files can be served here"}), 400
 
+    path = os.path.join(app.config["GENERATED_FOLDER"], safe_name)
+    if not os.path.exists(path):
+        return jsonify({"error": "HTML file not found"}), 404
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        html = f.read()
+
+    return app.response_class(html, mimetype="text/plain; charset=utf-8")
 @app.route("/download/<filename>")
 def download_file(filename):
     return send_from_directory(app.config["GENERATED_FOLDER"], filename, as_attachment=True)
