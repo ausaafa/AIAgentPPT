@@ -3,446 +3,1329 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Template Generator Demo</title>
- <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  <title>Prep Courses Document Tools</title>
+  <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --bg-main: #ffffff;
-  --bg-soft: #f4f4f4;
-  --card-glass: rgba(255, 255, 255, 0.75);
-  --card-border: rgba(0, 0, 0, 0.12);
-  --text-main: #000;
-  --text-muted: #555;
-
---btn-grad: linear-gradient(135deg, #1a1a1a, #2a2a2a);
---btn-shadow: 0 6px 18px rgba(0,0,0,.28);
-
-
-  --input-bg: #f1f1f1;
-  --input-border: #cfcfcf;
+  --blue: #1457ff;
+  --blue-soft: #eef4ff;
+  --blue-border: #bfd2ff;
+  --green: #16a34a;
+  --red: #ef4444;
+  --text: #101828;
+  --muted: #667085;
+  --line: #e5e7eb;
+  --bg: #f6f8fc;
+  --shadow: 0 16px 40px rgba(16, 24, 40, 0.08);
 }
 
-/* ---------- Base ---------- */
 * { box-sizing: border-box; }
 
 body {
-  background: linear-gradient(120deg, var(--bg-main), var(--bg-soft));
-  color: var(--text-main);
-  font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
   margin: 0;
-  font-weight: 600;
-  font-size: 1.05rem;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+  font-size: clamp(13.2px, 0.86vw, 15.4px);
+  font-weight: 500;
+  overflow: auto;
 }
 
-/* ---------- Layout ---------- */
-.container {
+button, select, input { font: inherit; }
+button { cursor: pointer; }
+
+.app {
+  height: 100vh;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: clamp(280px, 18vw, 330px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.sidebar {
+  background: #ffffff;
+  border-right: 1px solid var(--line);
+  padding: clamp(18px, 1.2vw, 24px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(16px, 1.4vw, 24px);
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.brand {
   display: flex;
-  gap: 30px;
-  width: 95%;
-  max-width: 1600px;
-  position: relative; /* ✅ REQUIRED */
+  align-items: center;
+  gap: 12px;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
 }
 
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #2b77ff, #1457ff);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(20, 87, 255, .22);
+}
 
-.left-panel,
-.right-panel {
-  flex: 1;
-  background: var(--card-glass);
-  backdrop-filter: blur(16px);
-  padding: 30px;
-  border-radius: 18px;
-  border: 1px solid var(--card-border);
-  box-shadow: 0 12px 40px rgba(0,0,0,.12);
+.nav-group-title {
+  margin: 8px 0 10px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.nav-list {
   display: flex;
   flex-direction: column;
+  gap: 7px;
+}
+
+.sidebar-scroll-area {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tools-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding-right: 4px;
+  padding-bottom: 10px;
+}
+
+.tools-scroll::-webkit-scrollbar { width: 7px; }
+.tools-scroll::-webkit-scrollbar-thumb { background: #d7def0; border-radius: 999px; }
+
+.nav-item {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-radius: 11px;
+  color: #26334d;
+  font-weight: 700;
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.nav-item:hover, .nav-item.active {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.nav-icon {
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f1f5f9;
+  color: var(--blue);
+  font-size: .9rem;
+  flex: 0 0 auto;
+}
+
+.nav-item.active .nav-icon { background: #dbe8ff; }
+
+.upgrade-card {
+  margin-top: auto;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff, #f2f7ff);
+}
+
+.upgrade-card strong { display: block; margin-bottom: 7px; font-size: .95rem; }
+.upgrade-card p { color: var(--muted); line-height: 1.4; margin: 0 0 12px; }
+
+.secondary-btn {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--blue-border);
+  color: var(--blue);
+  background: #ffffff;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  background: #f8fafc;
+  border-radius: 15px;
+  min-height: 58px;
+}
+
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #ffe7bf;
+  color: #b45309;
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.user-card small { color: var(--muted); display: block; margin-top: 2px; }
+
+.main {
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.left-panel {
+.topbar {
+  height: clamp(62px, 6.5vh, 76px);
+  background: #ffffff;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  flex: 0 0 auto;
+}
+
+.topnav {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  gap: 32px;
+}
+
+.topnav button {
+  border: 0;
+  background: transparent;
+  color: #344054;
+  font-weight: 800;
   position: relative;
-  overflow: hidden;      /* keeps gradient inside rounded corners */
+  padding: 0;
 }
 
-.left-panel::before {
+.topnav button.active { color: var(--blue); }
+
+.topnav button.active::after {
   content: "";
   position: absolute;
-  inset: 0;
-  background: var(--btn-grad);     /* ✅ exact same gradient as buttons */
-  border-radius: 18px;
-  box-shadow: var(--btn-shadow);   /* ✅ same shadow as buttons */
-  z-index: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--blue);
+  border-radius: 999px 999px 0 0;
 }
 
-/* makes sure everything inside stays on top and unchanged */
-.left-panel > * {
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   position: relative;
-  z-index: 1;
 }
 
-
-/* ---------- Template Preview ---------- */
-.template-showcase {
-  background: #eeeeee;
-  border-radius: 14px;
-  height: 350px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  margin-bottom: 20px;
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: #000;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+.bell-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: #344054;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.template-showcase img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #344054;
+  font-size: 1.1rem;
+  display: grid;
+  place-items: center;
+  position: relative;
 }
 
-/* ---------- Inputs ---------- */
-select,
-input[type="text"] {
-  width: 100%;
-  padding: 14px;
-  border-radius: 10px;
-  border: 1px solid var(--input-border);
-  background: var(--input-bg);
-  color: #000;
-  margin-bottom: 15px;
-  cursor: pointer;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
+.icon-btn:hover { background: #f8fafc; }
 
-/* ---------- File Upload ---------- */
-.file-upload-section {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.file-name-display {
-  background: #eaeaea;
-  border-radius: 10px;
-  padding: 16px;
-  color: #444;
-  font-size: 1rem;
-  font-weight: 600;
-  text-align: center;
-  border: 1px solid #ccc;
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.file-upload {
-  background: #fafafa;
-  border: 2px dashed #999;
-  border-radius: 14px;
-  height: 80px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: #000;
-  font-size: 1.15rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: .25s ease;
-}
-
-.file-upload:hover {
-  background: #fff;
-  border-color: #000;
-}
-
-/* ---------- Buttons ---------- */
-.reset-btn,
-.generate-btn,
-.animate-btn,
-.download-btn,
-.mcq-grade-btn {
-  background: var(--btn-grad);
-  color: #ffffff;
-  border: none;
-  border-radius: 14px;
-  font-weight: 800;                 /* strong, exam-grade */
-  cursor: pointer;
-  box-shadow: var(--btn-shadow);
-  transition: transform .18s ease, filter .18s ease;
-  letter-spacing: 0.4px;
-}
-
-.reset-btn,
-.generate-btn,
-.animate-btn {
-  flex: 1;                         /* 🔑 equal vertical growth */
-  font-size: 1.45rem;
-  margin-bottom: 15px;
-  min-height: 72px;                /* keeps them strong, not tiny */
-}
-
-
-.download-btn {
-  width: 100%;
-  height: 100%;
-  font-size: 1.3rem;
-}
-
-.mcq-grade-btn {
-  font-size: 1.15rem;
-  padding: 12px 18px;
-}
-
-/* Hover — subtle lift only */
-.reset-btn:hover,
-.generate-btn:hover,
-.animate-btn:hover,
-.download-btn:hover,
-.mcq-grade-btn:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.08);         /* gentle emphasis */
-}
-
-/* ---------- Panel Toast Modal ---------- */
-.panel-toast {
+.notification-dot {
   position: absolute;
-  bottom: -90px;
-  left: 50%;
-  transform: translateX(-50%);
-
-  width: 460px;
-  max-width: calc(100% - 60px);
-
-  background: #ffffff;                /* ✅ inverted */
-  color: #000000;                     /* ✅ inverted */
-  border-radius: 14px;
-  padding: 14px 18px;
-
-  border: 1px solid rgba(0,0,0,.18);  /* ✅ makes white toast visible */
-  box-shadow: 0 14px 30px rgba(0,0,0,.20);
-
-  opacity: 0;
-  pointer-events: none;
-
-  transition: opacity .25s ease, transform .25s ease;
-  z-index: 20;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b30;
+  right: 8px;
+  top: 8px;
+  display: none;
 }
 
+.notification-dot.show { display: block; }
 
-.panel-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-  pointer-events: auto;
+.new-project-btn {
+  height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  box-shadow: 0 12px 26px rgba(20, 87, 255, .24);
 }
 
-.toast-text {
-  font-size: 1.18rem;
-  font-weight: 600;
+.popover {
+  position: absolute;
+  right: 0;
+  top: 52px;
+  width: 340px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 14px;
+  display: none;
+  z-index: 30;
+}
+
+.popover.show { display: block; }
+.popover h3 { margin: 0 0 12px; font-size: 1rem; }
+
+.empty-state {
+  color: var(--muted);
+  background: #f8fafc;
+  border: 1px dashed #d8e0ee;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+  line-height: 1.45;
+}
+
+.notice-row, .doc-row {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #eef2f7;
   margin-bottom: 10px;
 }
 
-.toast-bar {
-  width: 100%;
-  height: 8px;
-  background: rgba(255,255,255,.15);
-  border-radius: 6px;
+.notice-row:last-child, .doc-row:last-child { margin-bottom: 0; }
+
+.notice-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.notice-row p, .doc-row p { margin: 0; color: var(--muted); line-height: 1.4; }
+.notice-row strong, .doc-row strong { display: block; color: var(--text); margin-bottom: 3px; }
+
+.content {
+  padding: 18px 22px 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 430px;
+  gap: 22px;
+  height: calc(100vh - clamp(62px, 6.5vh, 76px));
+  min-height: 0;
   overflow: hidden;
 }
 
-.toast-bar-fill {
+.left-workflow {
+  min-width: 0;
+  min-height: 0;
   height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #ffffff, #bbbbbb);
-  transition: width .15s linear;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
-.toast-row {
+
+/* FIX 1: Result column - bottom row taller for animate button */
+.result-column {
+  gap: 12px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 62px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.upload-card, .result-card, .recent-card, .example-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 8px 26px rgba(16, 24, 40, .04);
+}
+
+.upload-card {
+  min-height: clamp(135px, 16vh, 185px);
+  border: 1.5px dashed var(--blue-border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin-bottom: 6px;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: .2s ease;
+  padding: 22px;
+  flex: 0 0 auto;
 }
 
-.toast-check {
-  color: #16a34a;               /* green still good on white */
-  font-size: 1.1rem;
+.upload-card:hover, .upload-card.dragover {
+  border-color: var(--blue);
+  background: #fbfdff;
 }
 
-.toast-progress {
+.upload-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--blue);
+  font-size: 1.65rem;
+  margin: 0 auto 10px;
+}
+
+.upload-card h1 { font-size: 1.35rem; margin: 0 0 10px; letter-spacing: -0.03em; }
+.upload-card p { color: var(--muted); margin: 0 0 13px; line-height: 1.5; }
+.upload-card .browse { color: var(--blue); font-weight: 800; }
+
+.step-title { display: none; }
+.step-num { color: #344054; }
+
+.task-select {
   width: 100%;
-  height: 3px;
-  background: rgba(0,0,0,.15);  /* ✅ inverted */
-  border-radius: 2px;
+  height: 48px;
+  border: 1px solid #d9e0ea;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #344054;
+  padding: 0 16px;
+  font-size: .95rem;
+  font-weight: 700;
+  outline: none;
+  margin: 14px 0 10px;
+  flex: 0 0 auto;
+}
+
+.task-help { display: none; }
+
+.example-card {
+  min-height: 0;
+  height: 100%;
+  border-style: dashed;
+  border-color: var(--blue-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.template-showcase {
+  width: 100%;
+  height: 100%;
+  min-height: clamp(300px, 39vh, 460px);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #1f2937;
+}
+
+/* FIX 4: Image always fits inside the preview area at any scale */
+.template-showcase img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 12px;
+}
+
+.placeholder-visual {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #344054;
+}
+
+.placeholder-graphic {
+  display: flex;
+  align-items: center;
+  gap: clamp(22px, 3vw, 42px);
+  margin-bottom: 4px;
+}
+
+.mock-doc, .mock-output {
+  width: clamp(105px, 8vw, 132px);
+  height: clamp(105px, 8vw, 132px);
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #d9e6ff;
+  box-shadow: 0 14px 34px rgba(20, 87, 255, .12);
+  position: relative;
+}
+
+.mock-doc::before {
+  content: "W";
+  position: absolute;
+  left: 16px;
+  top: 18px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--blue);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.mock-doc::after, .mock-output::before, .mock-output::after {
+  content: "";
+  position: absolute;
+  height: 7px;
+  border-radius: 999px;
+  background: #bcd4ff;
+}
+
+.mock-doc::after { left: 52px; right: 22px; top: 27px; }
+.mock-output::before { left: 20px; right: 20px; top: 22px; background: var(--blue); }
+.mock-output::after { left: 20px; right: 20px; top: 52px; }
+
+.mock-arrow {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 1px solid #d9e6ff;
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  background: #ffffff;
+}
+
+.placeholder-visual h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.02em; }
+.placeholder-visual p { margin: 0; color: var(--muted); line-height: 1.65; }
+
+/* FIX 1 & 2: Action row — generate btn + model select */
+.action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.generate-btn {
+  height: 50px;
+  border-radius: 10px;
+  font-weight: 800;
+  border: 0;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 12px 26px rgba(20, 87, 255, .22);
+  transition: .18s ease;
+}
+
+/* FIX 2: Better-looking model select */
+.model-select {
+  height: 50px;
+  padding: 0 36px 0 14px;
+  border: 1.5px solid #d9e0ea;
+  border-radius: 10px;
+  background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23667085' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: #344054;
+  font-size: .88rem;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+  white-space: nowrap;
+}
+
+.model-select:hover {
+  border-color: var(--blue);
+}
+
+.model-select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(20, 87, 255, .12);
+}
+
+/* FIX 1: Animate button — polished, full-width, with icon */
+.animate-card {
+  width: 100%;
+  height: 62px;
+  border: 1.5px solid var(--blue-border);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--blue);
+  font-weight: 800;
+  font-size: 1rem;
+  box-shadow: 0 4px 16px rgba(20, 87, 255, .08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  letter-spacing: -0.01em;
+  transition: all .18s ease;
+  position: relative;
   overflow: hidden;
 }
 
-.toast-progress-fill {
-  width: 0%;
-  height: 100%;
-  background: #000000;          /* ✅ inverted */
-  transition: width .15s linear;
+.animate-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--blue-soft) 0%, #ffffff 100%);
+  opacity: 0;
+  transition: opacity .2s ease;
 }
 
+.animate-card:hover {
+  border-color: var(--blue);
+  box-shadow: 0 8px 24px rgba(20, 87, 255, .18);
+  transform: translateY(-1px);
+}
 
-/* ---------- Output ---------- */
-.output-area {
-  background: #f2f2f2;
-  border-radius: 14px;
-  height: 280px;
-  padding: 20px;
+.animate-card:hover::before {
+  opacity: 1;
+}
+
+.animate-card span {
+  position: relative;
+  z-index: 1;
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
-  margin-top: auto;   /* 🔑 THIS aligns bottoms */
+  align-items: center;
+  gap: 8px;
 }
 
+.animate-card .anim-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: .85rem;
+  flex: 0 0 auto;
+}
+
+.generate-btn:hover { transform: translateY(-1px); }
+button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+
+.result-card {
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.result-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.result-title { font-size: 1.1rem; font-weight: 900; display: flex; align-items: center; gap: 9px; }
+.clear-btn { border: 0; background: transparent; color: var(--muted); font-weight: 700; }
+
+.progress-status-card {
+  border: 1px solid #c8d8ff;
+  background: linear-gradient(180deg, #f7fbff, #ffffff);
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 0;
+}
+
+.progress-status-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-weight: 900;
+  color: #1849b8;
+}
+
+.progress-status-sub {
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
 
 .progress-bar-container {
   width: 100%;
-  height: 14px;
-  background: #ddd;
-  border-radius: 6px;
+  height: 9px;
+  background: #e4e7ec;
+  border-radius: 999px;
   overflow: hidden;
-  margin-bottom: 20px;
 }
 
 .progress-bar {
   width: 0%;
   height: 100%;
-  background: linear-gradient(90deg, #000, #555);
-  transition: width .3s ease;
+  background: var(--blue);
+  border-radius: inherit;
+  transition: width .35s ease;
 }
 
-/* ---------- MCQ Overlay ---------- */
-.mcq-overlay {
-  width: 100%;
+.file-pill {
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 0;
+}
+
+.file-icon {
+  width: 36px;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--blue);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.file-info { min-width: 0; flex: 1; }
+.file-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 900; }
+.file-info span { color: var(--muted); font-size: .82rem; }
+
+.file-status-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--green);
+  color: var(--green);
+  display: grid;
+  place-items: center;
+  font-size: .8rem;
+  flex: 0 0 auto;
+}
+
+.output-box {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 0;
   height: 100%;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.output-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+  flex: 0 0 auto;
+}
+
+.output-box-head strong { font-size: .95rem; }
+.output-badge { color: var(--muted); background: #f2f4f7; border-radius: 999px; padding: 6px 12px; font-size: .76rem; font-weight: 800; }
+
+.output-empty {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 7px;
+  overflow: hidden;
+  padding: 10px 0;
+}
+
+.output-empty-icon {
+  width: 92px;
+  height: 92px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 72% 70%, #1457ff 0 22%, transparent 23%),
+    linear-gradient(135deg, #eaf2ff, #ffffff);
+  display: grid;
+  place-items: center;
+  color: var(--blue);
+  font-size: 1.45rem;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.output-empty-icon::before {
+  content: "";
+  width: 46px;
+  height: 54px;
+  border-radius: 10px;
+  background: #dceaff;
+  box-shadow: 0 10px 0 -6px #b7cffb, 0 24px 0 -6px #b7cffb;
+  opacity: .9;
+}
+
+.output-empty-icon::after {
+  content: "✦";
+  position: absolute;
+  right: 19px;
+  bottom: 20px;
+  color: #ffffff;
+  font-size: 1.25rem;
+}
+
+.output-empty h3 { margin: 0; font-size: 1rem; text-align: center; }
+.output-empty p { margin: 0; color: var(--muted); line-height: 1.4; max-width: 260px; text-align: center; }
+
+.output-actions {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 10px;
+  margin-top: 10px;
+  flex: 0 0 auto;
 }
 
-.mcq-row input {
+.output-actions.single-action .download-btn { width: 100%; }
+
+/* FIX 3: Download button inside modals */
+.doc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid #eef2f7;
+  margin-bottom: 10px;
+}
+
+.doc-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-main strong { display: block; margin-bottom: 3px; color: var(--text); }
+.doc-main p { margin: 0 0 8px; color: var(--muted); line-height: 1.4; font-size: .85rem; }
+
+/* FIX 3: Doc download button — clean inline pill */
+.doc-download-btn {
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin-top: 10px;
+  border: 1.5px solid var(--blue-border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--blue);
+  font-size: .85rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all .15s ease;
+  text-align: center;
+}
+
+.doc-download-btn:hover:not(:disabled) {
+  background: var(--blue);
+  color: #ffffff;
+  border-color: var(--blue);
+}
+
+.doc-download-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.download-btn, .generate-btn {
+  height: 50px;
+  border-radius: 10px;
+  font-weight: 800;
+  transition: .18s ease;
+}
+
+.download-btn[disabled] { background: #ffffff; color: #667085; border: 1px solid #d9e0ea; }
+
+.download-btn:not([disabled]) {
+  border: 0;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 12px 26px rgba(20, 87, 255, .22);
+}
+
+/* FIX 3: Recent card (bottom of result column) */
+.recent-card {
+  padding: 12px;
+  min-height: 0;
+  height: 62px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex: 0 0 auto;
+}
+
+.recent-head h2 { margin: 0; font-size: 1.05rem; }
+
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.recent-empty {
+  height: 100%;
+  min-height: 52px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed #d8e0ee;
+  border-radius: 12px;
+  padding: 8px;
+  line-height: 1.2;
+  font-size: .8rem;
+}
+
+.recent-item { display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto; gap: 10px; align-items: center; }
+.recent-icon { width: 32px; height: 36px; border-radius: 6px; color: #fff; display: grid; place-items: center; font-size: .72rem; font-weight: 900; }
+.recent-icon.word { background: var(--blue); }
+.recent-icon.pdf { background: var(--red); }
+.recent-info { min-width: 0; }
+.recent-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-info span { color: var(--muted); font-size: .78rem; }
+.completed { color: #15803d; background: #dcfce7; border-radius: 999px; padding: 5px 10px; font-size: .72rem; font-weight: 800; }
+.more-btn { border: 0; background: transparent; color: var(--muted); font-size: 1.1rem; }
+
+.mcq-overlay { width: 100%; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.mcq-header { font-size: 1.05rem; font-weight: 900; }
+.mcq-row { display: grid; grid-template-columns: 28px minmax(0,1fr) 58px 115px; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.mcq-row input { margin: 0; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #d0d5dd; }
+.mcq-row-question { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #344054; }
+.mcq-score { color: var(--text); }
+.mcq-grade-btn { height: 44px; border: 0; color: #fff; background: var(--blue); border-radius: 10px; font-weight: 800; }
+
+.panel-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(18px);
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  background: #ffffff;
+  color: #101828;
+  border-radius: 14px;
+  padding: 14px 18px;
+  border: 1px solid rgba(0,0,0,.12);
+  box-shadow: 0 18px 40px rgba(16,24,40,.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: .25s ease;
+  z-index: 50;
+}
+
+.panel-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.toast-row { display: flex; align-items: center; justify-content: space-between; font-weight: 800; margin-bottom: 8px; }
+.toast-check { color: var(--green); }
+.toast-progress { width: 100%; height: 3px; background: #e4e7ec; border-radius: 999px; overflow: hidden; }
+.toast-progress-fill { width: 0%; height: 100%; background: var(--blue); transition: width .15s linear; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, .34);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 24px;
+}
+
+.modal-backdrop.show { display: flex; }
+
+.modal {
+  width: min(780px, 100%);
+  max-height: 82vh;
+  overflow: hidden;
   background: #fff;
-  border: 1px solid #ccc;
-  color: #000;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(15,23,42,.24);
+  display: flex;
+  flex-direction: column;
 }
 
-/* ---------- Small Text ---------- */
-.mcq-row-question { color: #222; }
-.mcq-score { color: #000; }
-</style>
+.modal-head {
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 
+.modal-head h2 { margin: 0; font-size: 1.2rem; }
+.modal-close { border: 0; background: #f8fafc; border-radius: 10px; width: 38px; height: 38px; font-weight: 900; }
+.modal-body { padding: 18px; overflow-y: auto; }
 
+.favorite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
 
+.favorite-action-btn.favorited {
+  background: var(--blue);
+  color: #ffffff;
+  border-color: var(--blue);
+}
 
+.favorite-action-btn {
+  height: 30px;
+  border: 1px solid var(--blue-border);
+  background: #ffffff;
+  color: var(--blue);
+  border-radius: 9px;
+  font-weight: 800;
+  padding: 0 10px;
+  font-size: .8rem;
+}
 
+.favorite-action-btn:hover { background: var(--blue-soft); }
+
+.preview-modal {
+  width: min(980px, 94vw);
+  height: min(760px, 86vh);
+}
+
+.preview-modal .modal-body {
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-frame { width: 100%; height: 100%; border: 0; background: #ffffff; }
+
+.code-preview-toolbar {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: #f8fafc;
+}
+
+.copy-code-btn {
+  height: 38px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #ffffff;
+  font-weight: 800;
+  padding: 0 14px;
+}
+
+.code-preview {
+  margin: 0;
+  padding: 18px;
+  flex: 1;
+  overflow: auto;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1250px) {
+  body { overflow: auto; }
+  .app { height: 100vh; min-height: 0; grid-template-columns: 260px minmax(0,1fr); }
+  .content { grid-template-columns: minmax(0,1fr) 400px; overflow: hidden; }
+  .sidebar { height: 100vh; min-height: 0; }
+  .example-card { min-height: 300px; }
+  .result-column { grid-template-rows: minmax(0, 1fr) 62px; }
+  .recent-card { height: 62px; }
+}
+
+@media (max-width: 950px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .content { grid-template-columns: 1fr; }
+  .topnav { display: none; }
+}
+  </style>
 </head>
 <body>
-  <div class="container">
-    <div class="left-panel">
-      <div class="template-section">
-        <div class="template-showcase" id="showcase">
-          <div id="showcaseText" style="font-size:1.4rem; margin-bottom:12px;">
-            Selected template showcase
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">◆</div><div>Prep Courses</div></div>
+
+      <div class="sidebar-scroll-area">
+        <div class="nav-list">
+          <button class="nav-item active" type="button"><span class="nav-icon">⌂</span>Home</button>
+          <button class="nav-item" type="button" id="myDocumentsBtn"><span class="nav-icon">▤</span>My Documents</button>
+          <button class="nav-item" type="button" id="favoritesBtn"><span class="nav-icon">☆</span>Favorites</button>
+        </div>
+
+        <div class="nav-group-title">Tools</div>
+        <div class="nav-list tools-scroll" id="toolsList">
+          <button class="nav-item" type="button" data-template-shortcut="cbt"><span class="nav-icon">●</span>CBT Generator</button>
+          <button class="nav-item" type="button" data-template-shortcut="vba"><span class="nav-icon">☷</span>MCQ Generator</button>
+          <button class="nav-item" type="button" data-template-shortcut="mcq2"><span class="nav-icon">☷</span>MCQ Generator 2</button>
+          <button class="nav-item" type="button" data-template-shortcut="mcq3"><span class="nav-icon">☷</span>MCQ Generator 3</button>
+          <button class="nav-item" type="button" data-template-shortcut="brand_template"><span class="nav-icon">♧</span>Brand/Drug Name Generator</button>
+          <button class="nav-item" type="button" data-template-shortcut="brand_template_mobile"><span class="nav-icon">▣</span>Brand/Drug Name Mobile</button>
+          <button class="nav-item" type="button" data-template-shortcut="vba_mobile"><span class="nav-icon">▤</span>MCQ Generator Mobile</button>
+          <button class="nav-item" type="button" data-template-shortcut="cbt_parser"><span class="nav-icon">◇</span>CBT Parser</button>
+          <button class="nav-item" type="button" data-template-shortcut="docx_to_html"><span class="nav-icon">⌘</span>DOCX → HTML</button>
+          <button class="nav-item" type="button" data-template-shortcut="chapter_translate"><span class="nav-icon">文</span>Word Chapter EN → FR</button>
+        </div>
+      </div>
+
+      <div class="user-card">
+        <div class="avatar">PD</div>
+        <div><strong>Prep Developers</strong><small>Document Tools</small></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <nav class="topnav" aria-label="Top navigation">
+          <button class="active" type="button">Dashboard</button>
+          <button type="button" id="topDocumentsBtn">My Documents</button>
+        </nav>
+
+        <div class="top-actions">
+          <button class="icon-btn" id="helpBtn" type="button" title="Help">?</button>
+          <button class="icon-btn" id="notificationBtn" type="button" title="Notifications">
+            <svg class="bell-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span class="notification-dot" id="notificationDot"></span>
+          </button>
+          <button class="new-project-btn" id="newProjectBtn" type="button"><span style="font-size:1.25rem;line-height:0;">＋</span> New Project</button>
+
+          <div class="popover" id="notificationPanel">
+            <h3>Notifications</h3>
+            <div id="notificationList"></div>
           </div>
-         
+        </div>
+      </header>
 
-          <input 
-            type="text" 
-            id="cbtInputInside"
-            placeholder="Enter CBT topic..."
-            style="
-              display:none;
-              width: 80%;
-              padding: 14px;
-              margin-top: 10px;
-              border-radius: 8px;
-              border: none;
-              background:#333;
-              color:white;
-              font-size:1.1rem;
-              text-align:center;
-            ">
+      <section class="content">
+        <div class="left-workflow">
+          <div class="upload-card" id="fileUpload">
+            <div>
+              <div class="upload-icon">☁</div>
+              <h1>Upload your Word or PDF file</h1>
+              <p>Drag & drop your file here, or <span class="browse">browse</span></p>
+              <p>Supports .docx, .pdf, .txt • Max size 50MB</p>
+            </div>
+          </div>
+
+          <div class="step-title"></div>
+          <select class="task-select" id="templateSelect">
+            <option value="none">Select output type</option>
+            <option value="cbt">CBT Generator</option>
+            <option value="vba">MCQ Generator</option>
+            <option value="mcq2">MCQ Generator 2</option>
+            <option value="mcq3">MCQ Generator 3</option>
+            <option value="brand_template">Brand/Drug Name Generator</option>
+            <option value="brand_template_mobile">Brand/Drug Name (Mobile)</option>
+            <option value="vba_mobile">MCQ Generator (Mobile)</option>
+            <option value="cbt_parser">CBT Parser</option>
+            <option value="docx_to_html">DOCX → HTML</option>
+            <option value="chapter_translate">Word Chapter EN → FR</option>
+          </select>
+          <p class="task-help"></p>
+
+          <div class="example-card">
+            <div class="template-showcase" id="showcase">
+              <div id="showcaseText" class="placeholder-visual">
+                <div class="placeholder-graphic">
+                  <div class="mock-doc"></div>
+                  <div class="mock-arrow">→</div>
+                  <div class="mock-output"></div>
+                </div>
+                <h2>Output example preview</h2>
+              </div>
+              <input type="text" id="cbtInputInside" placeholder="Enter CBT topic..." style="display:none;width:80%;padding:14px;margin-top:10px;border-radius:10px;border:1px solid #d0d5dd;background:#fff;color:#101828;font-size:1rem;text-align:center;">
+            </div>
+          </div>
+
+          <!-- FIX 1 & 2: Cleaner action row -->
+          <div class="action-row">
+            <button class="generate-btn" id="generateBtn">✣ Generate</button>
+            <select id="modelSelect" class="model-select">
+              <option value="gpt-4.5" selected>GPT 4.5</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
         </div>
 
-        <select id="templateSelect">
-          <option value="none">Select a template</option>
-          <option value="cbt">CBT Generator</option>
-          <option value="vba">MCQ Generator</option>
-          <option value="mcq2">MCQ Generator 2</option>
-          <option value="mcq3">MCQ Generator 3</option>
-          <option value="brand_template">Brand/Drug Name Generator</option>
-          <option value="brand_template_mobile">Brand/Drug Name (Mobile)</option>
-          <option value="vba_mobile">MCQ Generator (Mobile)</option>
-          <option value="cbt_parser">CBT Parser</option>
-          <option value="docx_to_html">DOCX → HTML</option>
-          <option value="chapter_translate">Word Chapter EN → FR</option>
+        <div class="result-column">
+          <div class="result-card">
+            <div class="result-head">
+              <div class="result-title"><span></span><span>Result</span></div>
+            </div>
 
-        </select>
-      </div>
+            <div class="progress-status-card">
+              <div class="progress-status-top"><span id="progressState">Ready to generate</span><span id="progressPercent">0%</span></div>
+              <div class="progress-status-sub" id="progressEta">Upload a document and choose an output type.</div>
+              <div class="progress-bar-container"><div class="progress-bar" id="progressBar"></div></div>
+            </div>
 
-      <div class="file-upload-section">
-        <div class="file-name-display">
-        <span id="fileName" class="file-name-text">No file added</span>
+            <div class="file-pill">
+              <div class="file-icon">W</div>
+              <div class="file-info"><strong id="fileName">No file added</strong><span id="fileMeta">DOCX • PDF • TXT</span></div>
+              <span class="file-status-dot">✓</span>
+            </div>
+
+            <div class="output-box" id="output">
+              <div class="output-box-head"><strong>Output Preview</strong><span class="output-badge" id="outputBadge">Not generated yet</span></div>
+              <div class="output-empty">
+                <div class="output-empty-icon">✦</div>
+                <h3>Your results will appear here</h3>
+                <p>Click "Generate" to transform your document.</p>
+              </div>
+              <div class="output-actions single-action">
+                <button class="download-btn" id="downloadBtn" disabled>Download</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- FIX 1: Animate button — proper size, styled well -->
+          <button class="animate-card" id="animateBtn">
+            <span>
+              <span class="anim-icon">▶</span>
+              Animate
+            </span>
+          </button>
         </div>
-        <div class="file-upload" id="fileUpload">Add file or drag file here</div>
-      </div>
-    </div>
+      </section>
+    </main>
 
-    <div class="right-panel">
-      <button class="reset-btn" id="resetBtn">Reset</button>
-      <button class="generate-btn" id="generateBtn">Generate</button>
-      <button class="animate-btn" id="animateBtn">Animate</button> <!-- New Animate button -->
-      <div class="output-area" id="output">
-        <div class="progress-bar-container">
-          <div class="progress-bar" id="progressBar"></div>
-        </div>
-        <button class="download-btn" id="downloadBtn">Download Generated File</button>
-      </div>
-    </div> <!-- closes right-panel -->
-
-    <!-- ✅ Container-centered toast -->
     <div id="panelToast" class="panel-toast">
-      <div class="toast-row">
-        <span class="toast-message" id="toastText">File uploaded</span>
-        <span class="toast-check">✔</span>
-      </div>
-      <div class="toast-progress">
-        <div class="toast-progress-fill" id="toastBarFill"></div>
-      </div>
+      <div class="toast-row"><span class="toast-message" id="toastText">File uploaded</span><span class="toast-check">✔</span></div>
+      <div class="toast-progress"><div class="toast-progress-fill" id="toastBarFill"></div></div>
     </div>
+  </div>
 
-  </div> <!-- closes container -->
+  <div class="modal-backdrop" id="documentsModal">
+    <div class="modal">
+      <div class="modal-head"><h2>My Documents</h2><button class="modal-close" id="closeDocumentsModal" type="button">×</button></div>
+      <div class="modal-body" id="documentsList"><div class="empty-state">No documents uploaded yet.</div></div>
+    </div>
+  </div>
 
+  <div class="modal-backdrop" id="favoritesModal">
+    <div class="modal">
+      <div class="modal-head"><h2>Favorites</h2><button class="modal-close" id="closeFavoritesModal" type="button">×</button></div>
+      <div class="modal-body" id="favoritesList"><div class="empty-state">No favorite documents yet.</div></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="previewModal">
+    <div class="modal preview-modal">
+      <div class="modal-head">
+        <h2 id="previewModalTitle">Preview</h2>
+        <button class="modal-close" id="closePreviewModal" type="button">×</button>
+      </div>
+      <div class="modal-body" id="previewModalBody"></div>
+    </div>
+  </div>
 
 <script>
   const templateSelect = document.getElementById('templateSelect');
   const showcase = document.getElementById('showcase');
   const fileUpload = document.getElementById('fileUpload');
   const fileNameDisplay = document.getElementById('fileName');
-  const downloadBtn = document.getElementById('downloadBtn');
+  const fileMeta = document.getElementById('fileMeta');
+  let downloadBtn = document.getElementById('downloadBtn');
+  let previewBtn = null;
   const generateBtn = document.getElementById('generateBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const animateBtn = document.getElementById('animateBtn'); // Added reference to animate button
+  const animateBtn = document.getElementById('animateBtn');
   const output = document.getElementById('output');
+  const modelSelect = document.getElementById('modelSelect');
+  const notificationBtn = document.getElementById('notificationBtn');
+  const notificationPanel = document.getElementById('notificationPanel');
+  const notificationList = document.getElementById('notificationList');
+  const notificationDot = document.getElementById('notificationDot');
+  const newProjectBtn = document.getElementById('newProjectBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const progressBar = document.getElementById('progressBar');
+  const progressPercent = document.getElementById('progressPercent');
+  const progressState = document.getElementById('progressState');
+  const progressEta = document.getElementById('progressEta');
+  const documentsModal = document.getElementById('documentsModal');
+  const documentsList = document.getElementById('documentsList');
+  const closeDocumentsModal = document.getElementById('closeDocumentsModal');
+  const myDocumentsBtn = document.getElementById('myDocumentsBtn');
+  const topDocumentsBtn = document.getElementById('topDocumentsBtn');
+  const favoritesBtn = document.getElementById('favoritesBtn');
+  const favoritesModal = document.getElementById('favoritesModal');
+  const favoritesList = document.getElementById('favoritesList');
+  const closeFavoritesModal = document.getElementById('closeFavoritesModal');
+  const previewModal = document.getElementById('previewModal');
+  const previewModalTitle = document.getElementById('previewModalTitle');
+  const previewModalBody = document.getElementById('previewModalBody');
+  const closePreviewModal = document.getElementById('closePreviewModal');
+
 const MCQ_ANIMATION_CODE = `
 Sub AutoOpen()
     AnimateMCQSlides
@@ -457,59 +1340,59 @@ Sub AnimateMCQSlides()
     Dim answerBox As Shape
     Dim optionBoxes As Collection
     Dim isAnswerSlide As Boolean
-    
+
     For Each sld In ActivePresentation.Slides
-        
+
         Set seq = sld.TimeLine.MainSequence
-        
+
         Do While seq.Count > 0
             seq(1).Delete
         Loop
-        
+
         Set optionBoxes = New Collection
         Set questionBox = Nothing
         Set answerBox = Nothing
         isAnswerSlide = False
-        
+
         For Each shp In sld.Shapes
             If shp.HasTextFrame Then
                 If shp.TextFrame.HasText Then
                     Dim txt As String
                     txt = Trim(shp.TextFrame.TextRange.Text)
-                    
+
                     If InStr(1, txt, "Correct Answer:", vbTextCompare) > 0 Then
                         isAnswerSlide = True
                         Set answerBox = shp
                     End If
-                    
+
                     If Left(txt, 1) = "Q" And InStr(txt, ":") > 0 Then
                         Set questionBox = shp
                     End If
-                    
+
                     If Left(txt, 2) Like "[A-D])" Then
                         optionBoxes.Add shp
                     End If
                 End If
             End If
         Next shp
-        
+
         If Not questionBox Is Nothing Then
             seq.AddEffect questionBox, msoAnimEffectAppear, , msoAnimTriggerOnPageClick
         End If
-        
+
         If Not isAnswerSlide Then
             Dim i As Integer
             For i = 1 To optionBoxes.Count
                 seq.AddEffect optionBoxes(i), msoAnimEffectAppear, , msoAnimTriggerOnPageClick
             Next i
         End If
-        
+
         If isAnswerSlide Then
             If Not answerBox Is Nothing Then
                 seq.AddEffect answerBox, msoAnimEffectAppear, , msoAnimTriggerOnPageClick
             End If
         End If
-        
+
     Next sld
 
 End Sub
@@ -529,13 +1412,13 @@ Sub AddDrugSlideAnimations()
 
     For Each sld In ActivePresentation.Slides
         Set seq = sld.TimeLine.MainSequence
-        
+
         Do While seq.Count > 0
             seq(1).Delete
         Loop
 
         Set animList = New Collection
-       
+
         For Each shp In sld.Shapes
             If shp.HasTextFrame Then
                 If shp.TextFrame.HasText Then
@@ -549,7 +1432,7 @@ Sub AddDrugSlideAnimations()
                 End If
             End If
         Next shp
-       
+
         Dim i As Integer
         For i = 1 To animList.Count
             seq.AddEffect animList(i), msoAnimEffectAppear, , msoAnimTriggerOnPageClick
@@ -559,458 +1442,591 @@ End Sub
 `;
 
   let uploadedFilename = null;
+  let uploadedMeta = '';
+  let documents = [];
+  let notifications = [];
+  let activeDownloadUrl = '';
+  let favorites = [];
 
-  templateSelect.addEventListener("change", () => {
-    const selected = templateSelect.value;
+function saveState() {
+  localStorage.setItem('prepDocuments', JSON.stringify(documents));
+  localStorage.setItem('prepFavorites', JSON.stringify(favorites));
+}
 
-    // Reset showcase area
-    showcase.innerHTML = `
-      <div id="showcaseText" style="font-size:1.4rem; margin-bottom:12px;">
-        Selected template showcase
+function loadState() {
+  try {
+    documents = JSON.parse(localStorage.getItem('prepDocuments')) || [];
+    favorites = JSON.parse(localStorage.getItem('prepFavorites')) || [];
+  } catch (err) {
+    documents = [];
+    favorites = [];
+  }
+}
+
+  function templateLabel(value) {
+    const option = [...templateSelect.options].find(opt => opt.value === value);
+    return option ? option.textContent : 'Generated File';
+  }
+
+  function defaultShowcaseMarkup() {
+    return `
+      <div id="showcaseText" class="placeholder-visual">
+        <div class="placeholder-graphic"><div class="mock-doc"></div><div class="mock-arrow">→</div><div class="mock-output"></div></div>
+        <h2>Output example preview</h2>
       </div>
-      <input type="text" id="cbtInputInside" placeholder="Enter CBT topic..."
-        style="display:none;width:80%;padding:14px;margin-top:10px;border-radius:8px;border:none;background:#333;color:white;font-size:1.1rem;text-align:center;">
+      <input type="text" id="cbtInputInside" placeholder="Enter CBT topic..." style="display:none;width:80%;padding:14px;margin-top:10px;border-radius:10px;border:1px solid #d0d5dd;background:#fff;color:#101828;font-size:1rem;text-align:center;">
     `;
+  }
 
-    // Default output (progress + download) for all EXCEPT MCQ grader
-    if (selected !== "mcq_grader") {
-      output.innerHTML = `
-        <div class="progress-bar-container">
-          <div class="progress-bar" id="progressBar"></div>
-        </div>
-        <button class="download-btn" id="downloadBtn">Download Generated File</button>
-      `;
+  function defaultOutputInner() {
+    return `
+      <div class="output-box-head"><strong>Output Preview</strong><span class="output-badge" id="outputBadge">Not generated yet</span></div>
+      <div class="output-empty"><div class="output-empty-icon">✦</div><h3>Your results will appear here</h3><p>Click "Generate" to transform your document.</p></div>
+      <div class="output-actions single-action"><button class="download-btn" id="downloadBtn" disabled>Download</button></div>
+    `;
+  }
+
+  function setOutputStatus(text) {
+    const badge = document.getElementById('outputBadge');
+    if (badge) badge.textContent = text;
+  }
+
+  function setProgress(value, state, etaText) {
+    progressBar.style.width = value + '%';
+    progressPercent.textContent = value + '%';
+    progressState.textContent = state;
+    progressEta.textContent = etaText;
+  }
+
+  function addNotification(title, message) {
+    notifications.unshift({ title, message });
+    notificationDot.classList.add('show');
+    renderNotifications();
+  }
+
+  function renderNotifications() {
+    if (!notifications.length) { notificationList.innerHTML = ''; return; }
+    notificationList.innerHTML = notifications.map(item => `
+      <div class="notice-row"><div class="notice-icon">✓</div><div><strong>${item.title}</strong><p>${item.message}</p></div></div>
+    `).join('');
+  }
+
+  function addDocument(filename, outputType, downloadUrl = '') {
+    if (!filename && outputType !== 'CBT Generator') return;
+    const name = filename || 'Generated CBT File';
+    const existingIndex = documents.findIndex(doc => doc.name === name);
+    const doc = {
+      name,
+      output: outputType,
+      time: 'Just now',
+      type: name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'word',
+      downloadUrl
+    };
+    if (existingIndex >= 0) {
+      documents[existingIndex] = doc;
     } else {
-      output.innerHTML = `
-        <div class="mcq-overlay" id="mcqOverlay">
-          <div class="mcq-header">MCQ Grader</div>
-          <div>Upload your MCQ file, then click <b>Generate</b> to load questions.</div>
-        </div>
-      `;
+      documents.unshift(doc);
     }
+    renderRecentFiles();
+    renderDocumentsModal();
+    saveState();
+  }
 
-    // CBT mode
-    if (selected === "cbt") {
-      document.getElementById("showcaseText").textContent = "Enter a topic";
-      document.getElementById("cbtInputInside").style.display = "block";
-      return;
-    }
+function renderRecentFiles() {}
 
-    // VBA preview image
-    if (selected === "vba") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/VBATemplate1.png' style='max-width:100%;max-height:100%;'>";
-      return;
-    }
-        // VBA preview image
-    if (selected === "mcq2") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/mcq2.png' style='max-width:100%;max-height:100%;'>";
-      return;
-    }
-    if (selected === "mcq3") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/mcq3.png' style='max-width:100%;max-height:100%;'>";
-      return;
-    }
-    // Brand/drug template preview
-    if (selected === "brand_template") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/Drugtemplate.png' style='max-width:100%;max-height:100%;'>";
-      return;
-    }
-
-    // Brand / Drug Mobile preview
-    if (selected === "brand_template_mobile") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/brandmobile1.png' style='max-width:100%;max-height:100%;object-fit:contain;'>";
-      return;
-    }
-
-    // MCQ Mobile preview
-    if (selected === "vba_mobile") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/mcqmobile1.png' style='max-width:100%;max-height:100%;object-fit:contain;'>";
-      return;
-    }
-
-    if (selected === "mcq_grader") {
-      document.getElementById("showcaseText").textContent =
-        "MCQ Grader – upload MCQ file then click Generate";
-      return;
-    }
-    
-    if (selected === "cbt_parser") {
-      document.getElementById("showcaseText").innerHTML =
-        "<img src='/static/cbtparser.png' style='max-width:100%;max-height:100%;'>";
-      return;
-    }
-    
-    if (selected === "docx_to_html") {
-    document.getElementById("showcaseText").textContent =
-      "Upload a DOCX file to convert into clean HTML";
-      return;
-    }
-if (selected === "chapter_translate") {
-  document.getElementById("showcaseText").innerHTML =
-    "<div style='width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;'>" +
-      "<div style='font-size:1.75rem;font-weight:900;margin-bottom:16px;color:#000;'>Word Chapter Translator</div>" +
-      "<div style='font-size:1.05rem;font-weight:600;line-height:1.65;max-width:620px;color:#333;'>" +
-        "Upload a Word chapter file and receive a polished French version." +
-      "</div>" +
-    "</div>";
-  return;
-} 
-
-    // Default text
-    const showcaseText = document.getElementById("showcaseText");
-    showcaseText.textContent =
-      templateSelect.options[templateSelect.selectedIndex].text + " selected";
-  });
-  const panelToast = document.getElementById("panelToast");
-const toastText = document.getElementById("toastText");
-const toastBarFill = document.getElementById("toastBarFill");
-
-let toastTimer = null;
-
-function showToast(message, duration = 3500, persistent = false) {
-  if (toastTimer) clearInterval(toastTimer);
-
-  toastText.textContent = message;
-  toastBarFill.style.width = "0%";
-  panelToast.classList.add("show");
-
-  // ✅ ONLY stay visible when explicitly requested
-  if (persistent) {
-    toastBarFill.style.width = "100%";
+function renderDocumentsModal() {
+  if (!documents.length) {
+    documentsList.innerHTML = '<div class="empty-state">No documents uploaded yet.</div>';
     return;
   }
 
-  let progress = 0;
-  toastTimer = setInterval(() => {
-    progress += 100 / (duration / 50);
-    toastBarFill.style.width = Math.min(progress, 100) + "%";
-
-    if (progress >= 100) {
-      clearInterval(toastTimer);
-      toastTimer = null;
-      setTimeout(() => {
-        panelToast.classList.remove("show");
-      }, 200);
-    }
-  }, 50);
+  documentsList.innerHTML = documents.map((item, index) => {
+    const key = `${item.name}-output-${item.output}`;
+    const favorited = favorites.some(fav => fav.key === key);
+    return `
+      <div class="doc-row document-row">
+        <div class="notice-icon">${item.type === 'pdf' ? 'PDF' : 'W'}</div>
+        <div class="doc-main">
+          <strong>${item.name}</strong>
+          <p>Output: ${item.output}<br>Status: ${item.output === 'Not generated yet' ? 'Uploaded' : 'Completed'} • ${item.time}</p>
+          <div class="favorite-actions">
+            <button class="favorite-action-btn ${favorited ? 'favorited' : ''}" type="button" data-favorite-index="${index}">
+              ${favorited ? '★ Favorited' : '☆ Favorite'}
+            </button>
+          </div>
+        </div>
+        <button class="doc-download-btn" type="button" data-download-doc-index="${index}" ${!item.downloadUrl ? 'disabled' : ''}>
+          ↓ Download
+        </button>
+      </div>
+    `;
+  }).join('');
 }
 
+function addFavorite(docIndex) {
+  const doc = documents[docIndex];
+  if (!doc || doc.output === 'Not generated yet') return;
+  const key = `${doc.name}-output-${doc.output}`;
+  const existingIndex = favorites.findIndex(item => item.key === key);
+  if (existingIndex >= 0) {
+    favorites.splice(existingIndex, 1);
+    renderFavoritesModal();
+    renderDocumentsModal();
+    saveState();
+    showToast('Removed from favorites');
+    return;
+  }
+  favorites.unshift({
+    key,
+    name: doc.name,
+    output: doc.output,
+    label: `${doc.output} output`,
+    time: 'Just now',
+    type: doc.type,
+    downloadUrl: doc.downloadUrl || ''
+  });
+  renderFavoritesModal();
+  renderDocumentsModal();
+  saveState();
+  showToast('Added to favorites');
+}
 
-  // Handle file upload (click + drag)
+function renderFavoritesModal() {
+  if (!favorites.length) {
+    favoritesList.innerHTML = '<div class="empty-state">No favorite documents yet.</div>';
+    return;
+  }
+  favoritesList.innerHTML = favorites.map((item, index) => `
+    <div class="doc-row document-row">
+      <div class="notice-icon">${item.type === 'pdf' ? 'PDF' : 'W'}</div>
+      <div class="doc-main">
+        <strong>${item.name}</strong>
+        <p>Favorited output: ${item.output}<br>Saved: ${item.time}</p>
+        <div class="favorite-actions">
+          <button class="favorite-action-btn favorited" type="button" data-unfavorite-index="${index}">
+            ★ Favorited
+          </button>
+        </div>
+      </div>
+      <button class="doc-download-btn" type="button" data-download-favorite-index="${index}" ${!item.downloadUrl ? 'disabled' : ''}>
+        ↓ Download
+      </button>
+    </div>
+  `).join('');
+}
+
+  function resetProject() {
+    setProgress(0, 'Ready to generate', 'Upload a document and choose an output type.');
+    showcase.innerHTML = defaultShowcaseMarkup();
+    fileNameDisplay.textContent = 'No file added';
+    fileMeta.textContent = 'DOCX • PDF • TXT';
+    templateSelect.value = 'none';
+    uploadedFilename = null;
+    uploadedMeta = '';
+    activeDownloadUrl = '';
+    output.innerHTML = defaultOutputInner();
+    downloadBtn = document.getElementById('downloadBtn');
+    previewBtn = null;
+    showToast('New project ready');
+  }
+
+  templateSelect.addEventListener('change', () => {
+    const selected = templateSelect.value;
+    showcase.innerHTML = defaultShowcaseMarkup();
+    output.innerHTML = defaultOutputInner();
+    downloadBtn = document.getElementById('downloadBtn');
+    previewBtn = null;
+    if (downloadBtn) {
+      downloadBtn.textContent = selected === 'docx_to_html' ? 'Copy' : 'Download';
+    }
+    setOutputStatus('Not generated yet');
+
+    if (selected === 'cbt') {
+      document.getElementById('cbtInputInside').style.display = 'block';
+      return;
+    }
+    if (selected === 'vba') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/VBATemplate1.png' alt='MCQ Generator preview'>";
+      return;
+    }
+    if (selected === 'mcq2') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/mcq2.png' alt='MCQ Generator 2 preview'>";
+      return;
+    }
+    if (selected === 'mcq3') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/mcq3.png' alt='MCQ Generator 3 preview'>";
+      return;
+    }
+    if (selected === 'brand_template') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/Drugtemplate.png' alt='Brand Drug template preview'>";
+      return;
+    }
+    if (selected === 'brand_template_mobile') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/brandmobile1.png' alt='Brand Drug mobile preview'>";
+      return;
+    }
+    if (selected === 'vba_mobile') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/mcqmobile1.png' alt='MCQ mobile preview'>";
+      return;
+    }
+    if (selected === 'cbt_parser') {
+      document.getElementById('showcaseText').innerHTML = "<img src='/static/cbtparser.png' alt='CBT parser preview'>";
+      return;
+    }
+    if (selected === 'docx_to_html' || selected === 'mcq_grader') { return; }
+    if (selected === 'chapter_translate') {
+      document.getElementById('showcaseText').innerHTML =
+        "<div style='width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;'>" +
+          "<div style='font-size:1.75rem;font-weight:900;margin-bottom:16px;color:#101828;'>Word Chapter Translator</div>" +
+          "<div style='font-size:1.05rem;font-weight:600;line-height:1.65;max-width:620px;color:#667085;'>Upload a Word chapter file and receive a polished French version.</div>" +
+        "</div>";
+      return;
+    }
+  });
+
+  const panelToast = document.getElementById('panelToast');
+  const toastText = document.getElementById('toastText');
+  const toastBarFill = document.getElementById('toastBarFill');
+  let toastTimer = null;
+
+  function showToast(message, duration = 3500, persistent = false) {
+    if (toastTimer) clearInterval(toastTimer);
+    toastText.textContent = message;
+    toastBarFill.style.width = '0%';
+    panelToast.classList.add('show');
+    if (persistent) { toastBarFill.style.width = '100%'; return; }
+    let progress = 0;
+    toastTimer = setInterval(() => {
+      progress += 100 / (duration / 50);
+      toastBarFill.style.width = Math.min(progress, 100) + '%';
+      if (progress >= 100) {
+        clearInterval(toastTimer);
+        toastTimer = null;
+        setTimeout(() => panelToast.classList.remove('show'), 200);
+      }
+    }, 50);
+  }
+
   fileUpload.addEventListener('click', async () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.txt,.pdf,.docx';
-    input.onchange = async () => {
-      const file = input.files[0];
-      await uploadFile(file);
-    };
+    input.onchange = async () => await uploadFile(input.files[0]);
     input.click();
   });
 
-  fileUpload.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    fileUpload.classList.add('dragover');
-  });
-
-  fileUpload.addEventListener('dragleave', () => {
-    fileUpload.classList.remove('dragover');
-  });
-
-  fileUpload.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    fileUpload.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    await uploadFile(file);
-  });
+  fileUpload.addEventListener('dragover', (e) => { e.preventDefault(); fileUpload.classList.add('dragover'); });
+  fileUpload.addEventListener('dragleave', () => fileUpload.classList.remove('dragover'));
+  fileUpload.addEventListener('drop', async (e) => { e.preventDefault(); fileUpload.classList.remove('dragover'); await uploadFile(e.dataTransfer.files[0]); });
 
   async function uploadFile(file) {
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
-
-    const res = await fetch('/upload', {
-      method: 'POST',
-      body: formData
-    });
-
+    const res = await fetch('/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.filename) {
       uploadedFilename = data.filename;
-      fileNameDisplay.textContent = `Uploaded: ${data.filename}`;
-      showToast("File uploaded successfully");
-
+      uploadedMeta = `${file.name.split('.').pop().toUpperCase()} • ${(file.size / 1024 / 1024).toFixed(1)} MB • Uploaded just now`;
+      fileNameDisplay.textContent = data.filename;
+      fileMeta.textContent = uploadedMeta;
+      setProgress(8, 'File uploaded', 'Ready to generate when you choose an output type.');
+      showToast('File uploaded successfully');
+      if (!documents.some(doc => doc.name === data.filename)) {
+        documents.unshift({
+          name: data.filename,
+          output: 'Not generated yet',
+          time: 'Just now',
+          type: data.filename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'word',
+          downloadUrl: ''
+        });
+        renderDocumentsModal();
+      }
     } else {
-     showToast("Upload failed");
-
+      uploadedFilename = null;
+      fileNameDisplay.textContent = 'No file added';
+      fileMeta.textContent = 'DOCX • PDF • TXT';
+      setProgress(0, 'Upload failed', 'Try uploading the file again.');
+      showToast(data.error || 'Upload failed');
     }
   }
 
-  // Render MCQ grader overlay
   function renderMcqOverlay(mcqs) {
-    output.innerHTML = "";
-
-    const overlay = document.createElement("div");
-    overlay.className = "mcq-overlay";
-
-    const header = document.createElement("div");
-    header.className = "mcq-header";
-    header.textContent = "MCQ Grader";
+    output.innerHTML = '';
+    const overlay = document.createElement('div');
+    overlay.className = 'mcq-overlay';
+    const header = document.createElement('div');
+    header.className = 'mcq-header';
+    header.textContent = 'MCQ Grader';
     overlay.appendChild(header);
-
-    const score = document.createElement("div");
-    score.className = "mcq-score";
-    score.id = "mcqScore";
+    const score = document.createElement('div');
+    score.className = 'mcq-score';
+    score.id = 'mcqScore';
     score.textContent = `Loaded ${mcqs.length} questions. Enter A/B/C/D then click Grade All.`;
     overlay.appendChild(score);
-
     mcqs.forEach((mcq, idx) => {
-      const row = document.createElement("div");
-      row.className = "mcq-row";
+      const row = document.createElement('div');
+      row.className = 'mcq-row';
       row.dataset.answer = mcq.answer;
-
-      const num = document.createElement("div");
-      num.className = "mcq-row-number";
-      num.textContent = (idx + 1) + ".";
-      row.appendChild(num);
-
-      const qText = document.createElement("div");
-      qText.className = "mcq-row-question";
-      qText.title = mcq.question;
-      qText.textContent = mcq.question;
-      row.appendChild(qText);
-
-      const input = document.createElement("input");
+      row.innerHTML = `<div class="mcq-row-number">${idx + 1}.</div><div class="mcq-row-question" title="${mcq.question}">${mcq.question}</div>`;
+      const input = document.createElement('input');
       input.maxLength = 1;
-      input.className = "mcq-input";
-      input.addEventListener("input", () => {
-        input.value = input.value.toUpperCase().replace(/[^ABCD]/g, "");
-      });
+      input.className = 'mcq-input';
+      input.addEventListener('input', () => { input.value = input.value.toUpperCase().replace(/[^ABCD]/g, ''); });
       row.appendChild(input);
-
-      const result = document.createElement("div");
-      result.className = "mcq-row-result";
+      const result = document.createElement('div');
+      result.className = 'mcq-row-result';
       row.appendChild(result);
-
       overlay.appendChild(row);
     });
-
-    const gradeBtn = document.createElement("button");
-    gradeBtn.className = "mcq-grade-btn";
-    gradeBtn.textContent = "Grade All";
-    gradeBtn.addEventListener("click", () => {
-      const rows = overlay.querySelectorAll(".mcq-row");
+    const gradeBtn = document.createElement('button');
+    gradeBtn.className = 'mcq-grade-btn';
+    gradeBtn.textContent = 'Grade All';
+    gradeBtn.addEventListener('click', () => {
+      const rows = overlay.querySelectorAll('.mcq-row');
       let correctCount = 0;
       let attempted = 0;
-
       rows.forEach((row) => {
         const ans = row.dataset.answer;
-        const input = row.querySelector("input");
-        const result = row.querySelector(".mcq-row-result");
-        const user = (input.value || "").toUpperCase().trim();
-
-        if (!user) {
-          result.textContent = "No answer";
-          result.style.color = "#ffca28";
-          return;
-        }
-
-        if (!"ABCD".includes(user)) {
-          result.textContent = "Enter A–D";
-          result.style.color = "#ffca28";
-          return;
-        }
-
+        const input = row.querySelector('input');
+        const result = row.querySelector('.mcq-row-result');
+        const user = (input.value || '').toUpperCase().trim();
+        if (!user) { result.textContent = 'No answer'; result.style.color = '#ffca28'; return; }
+        if (!'ABCD'.includes(user)) { result.textContent = 'Enter A–D'; result.style.color = '#ffca28'; return; }
         attempted += 1;
-
-        if (user === ans) {
-          correctCount += 1;
-          result.textContent = "Right";
-          result.style.color = "#00e676";
-        } else {
-          result.textContent = `Wrong (Correct: ${ans})`;
-          result.style.color = "#ff5252";
-        }
+        if (user === ans) { correctCount += 1; result.textContent = 'Right'; result.style.color = '#00e676'; }
+        else { result.textContent = `Wrong (Correct: ${ans})`; result.style.color = '#ff5252'; }
       });
-
-      const scoreEl = document.getElementById("mcqScore");
-      if (attempted === 0) {
-        scoreEl.textContent = "No questions attempted yet.";
-      } else {
-        scoreEl.textContent = `Score: ${correctCount} / ${attempted} (Total questions: ${mcqs.length})`;
-      }
+      document.getElementById('mcqScore').textContent = attempted === 0 ? 'No questions attempted yet.' : `Score: ${correctCount} / ${attempted} (Total questions: ${mcqs.length})`;
     });
-
     overlay.appendChild(gradeBtn);
     output.appendChild(overlay);
   }
 
-  // Handle Generate button
-  generateBtn.addEventListener('click', async () => {
-  
-    const template = templateSelect.value;
+  async function openGeneratedPreview(url, template) {
+    previewModalTitle.textContent = template === 'docx_to_html' ? 'HTML Code Preview' : 'Generated File Preview';
+    previewModalBody.innerHTML = '';
+    if (template === 'docx_to_html') {
+      try {
+        const res = await fetch(url);
+        const htmlText = await res.text();
+        previewModalBody.innerHTML = `
+          <div class="code-preview-toolbar">
+            <button class="copy-code-btn" type="button" id="copyPreviewCodeBtn">Copy HTML</button>
+          </div>
+          <pre class="code-preview" id="codePreviewBlock"></pre>
+        `;
+        document.getElementById('codePreviewBlock').textContent = htmlText;
+        document.getElementById('copyPreviewCodeBtn').onclick = async () => {
+          await navigator.clipboard.writeText(htmlText);
+          showToast('HTML copied to clipboard', 3000);
+        };
+        previewModal.classList.add('show');
+      } catch (err) {
+        showToast('Could not load HTML preview', 3500);
+      }
+      return;
+    }
+    previewModalBody.innerHTML = `<iframe class="preview-frame" src="${url}"></iframe>`;
+    previewModal.classList.add('show');
+  }
 
-    if (template === "none") {
-      showToast("Please select a template");
+  generateBtn.addEventListener('click', async () => {
+    const template = templateSelect.value;
+    if (template === 'none') { showToast('Please select a template'); return; }
+    if (template !== 'cbt' && !uploadedFilename) { showToast('Please upload a file first', 3500); return; }
+
+    if (template === 'mcq_grader') {
+      setProgress(15, 'Loading questions', 'Estimated time left: 10 seconds');
+      const res = await fetch('/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: uploadedFilename, template: 'mcq_grader', cbt_topic: '' }) });
+      const data = await res.json();
+      if (data.error) { setProgress(0, 'Generation failed', 'Try again.'); showToast('MCQ load failed: ' + data.error); return; }
+      setProgress(100, 'Generation complete', 'Ready now.');
+      renderMcqOverlay(data.mcqs);
+      addDocument(uploadedFilename, 'MCQ Grader');
+      addNotification('Generation complete', 'MCQ Grader finished successfully.');
       return;
     }
 
-    // MCQ GRADER MODE (no download, just overlay)
-    if (template === "mcq_grader") {
-      if (!uploadedFilename) {
-        showToast("Please upload a file first");
+    downloadBtn = document.getElementById('downloadBtn');
+    previewBtn = null;
+    setOutputStatus('Generating');
+    generateBtn.disabled = true;
+    generateBtn.textContent = 'Generating...';
+    setProgress(3, 'Sending request', 'Starting...');
 
-        return;
-      }
+    let jobId = null;
+    let sseSource = null;
 
-      const res = await fetch('/generate', {
+    // Start SSE polling once we have a jobId
+    function startProgressStream(id) {
+      sseSource = new EventSource(`/progress/${id}`);
+      sseSource.onmessage = (e) => {
+        if (!e.data || e.data === '{}') return;
+        try {
+          const info = JSON.parse(e.data);
+          if (info.pct !== undefined) {
+            setProgress(info.pct, info.state || '', info.eta || '');
+          }
+          if (info.pct >= 100) { sseSource.close(); }
+        } catch (_) {}
+      };
+      sseSource.onerror = () => { sseSource.close(); };
+    }
+
+    try {
+      // Fire generate — this blocks until done, but SSE runs in parallel
+      const fetchPromise = fetch('/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           filename: uploadedFilename,
-          template: "mcq_grader",
-          cbt_topic: ""
+          template,
+          cbt_topic: document.getElementById('cbtInputInside') ? document.getElementById('cbtInputInside').value : ''
         })
       });
 
-      const data = await res.json();
-
-      if (data.error) {
-        showToast('MCQ load failed: ' + data.error);
-        return;
-      }
-
-      renderMcqOverlay(data.mcqs);
-      return;
-    }
-    // All other templates = original behaviour (progress + download)
-    if (template !== "cbt" && !uploadedFilename) {
-      showToast("Please upload a file first", 3500);
-      return;
-    }
-
-
-    const progressBar = document.getElementById("progressBar");
-    const downloadBtnLive = document.getElementById("downloadBtn");
-
-    if (progressBar) {
-      progressBar.style.width = '0%';
-      let progress = 0;
-      const interval = setInterval(() => {
-        if (progress >= 100) clearInterval(interval);
-        else {
-          progress += 10;
-          progressBar.style.width = progress + '%';
-        }
+      // Poll for job_id every 200ms so we can subscribe to SSE ASAP
+      const pollTimer = setInterval(async () => {
+        // job_id comes back in the response — handled after fetch resolves
       }, 200);
 
-      const res = await fetch('/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: uploadedFilename,
-          template: template,
-          cbt_topic: document.getElementById("cbtInputInside")
-            ? document.getElementById("cbtInputInside").value
-            : ""
-        })
-      });
+      const res = await fetchPromise;
+      clearInterval(pollTimer);
+      if (sseSource) sseSource.close();
 
       const data = await res.json();
-      clearInterval(interval);
-      progressBar.style.width = '100%';
+      generateBtn.disabled = false;
+      generateBtn.textContent = '✣ Generate';
 
-      if (data.download_url) {
-
-        // ================= DOCX → HTML (COPY TO CLIPBOARD) =================
-        if (template === "docx_to_html") {
-          showToast("HTML generated – click Download to copy", 0, true);
-
-          if (downloadBtnLive) {
-            downloadBtnLive.onclick = async () => {
-              panelToast.classList.remove("show");
-
-              try {
-                const res = await fetch(data.download_url);
-                const htmlText = await res.text();
-
-                await navigator.clipboard.writeText(htmlText);
-                showToast("✅ HTML code copied to clipboard", 3500);
-              } catch (err) {
-                showToast("❌ Failed to copy HTML to clipboard", 3500);
-              }
-            };
-          }
-
-        } else {
-          // ================= ALL OTHER TEMPLATES (NORMAL DOWNLOAD) =================
-          showToast("File generated successfully – click Download", 0, true);
-
-          if (downloadBtnLive) {
-            downloadBtnLive.dataset.url = data.download_url;
-            downloadBtnLive.onclick = () => {
-              panelToast.classList.remove("show");
-              window.location.href = downloadBtnLive.dataset.url;
-            };
-          }
-        }
-
-      } else {
-        showToast("Generation failed");
+      if (data.job_id && !jobId) {
+        jobId = data.job_id;
       }
 
+      if (data.download_url) {
+        activeDownloadUrl = data.download_url;
+        setProgress(100, 'Generation complete', 'Ready now.');
+        setOutputStatus('Generated');
+        showToast(template === 'docx_to_html' ? 'HTML generated – click Download to copy' : 'File generated successfully – click Download', 0, true);
+        addNotification('Generation complete', templateLabel(template) + ' finished successfully.');
+        addDocument(uploadedFilename || 'Generated CBT File', templateLabel(template), data.download_url);
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = template === 'docx_to_html' ? 'Copy' : 'Download';
+
+        if (template === 'docx_to_html') {
+          downloadBtn.onclick = async () => {
+            panelToast.classList.remove('show');
+            try {
+              const htmlRes = await fetch(data.download_url);
+              const htmlText = await htmlRes.text();
+              await navigator.clipboard.writeText(htmlText);
+              showToast('✅ HTML code copied to clipboard', 3500);
+            } catch (err) { showToast('❌ Failed to copy HTML to clipboard', 3500); }
+          };
+        } else {
+          downloadBtn.dataset.url = data.download_url;
+          downloadBtn.onclick = () => { panelToast.classList.remove('show'); window.location.href = downloadBtn.dataset.url; };
+        }
+      } else {
+        setProgress(0, 'Generation failed', data.error || 'No download URL returned.');
+        setOutputStatus('Failed');
+        showToast(data.error || 'Generation failed');
+      }
+    } catch (error) {
+      if (sseSource) sseSource.close();
+      generateBtn.disabled = false;
+      generateBtn.textContent = '✣ Generate';
+      setProgress(0, 'Generation failed', 'Could not reach backend.');
+      setOutputStatus('Failed');
+      showToast('Generation failed');
     }
   });
 
-// Handle Animate button (CONDITIONAL + CLIPBOARD)
-animateBtn.addEventListener('click', async () => {
-  const selected = templateSelect.value;
-
-  // MCQ Generator ONLY (regular, not mobile)
-  if (selected === "vba") {
-    await navigator.clipboard.writeText(MCQ_ANIMATION_CODE);
-    showToast("MCQ Animation Code Copied", 3500);
-    return;
-  }
-
-  // Brand / Drug Generator ONLY (regular, not mobile)
-  if (selected === "brand_template") {
-    await navigator.clipboard.writeText(DRUG_ANIMATION_CODE);
-    showToast("Drug Animation Code Copied", 3500);
-    return;
-  }
-
-  // Any other template
-  showToast("Select MCQ or Brand template to copy animation code", 3500);
-});
-
-  // Reset
-  resetBtn.addEventListener('click', () => {
-    const progressBar = document.getElementById("progressBar");
-    if (progressBar) progressBar.style.width = '0%';
-
-    showcase.innerHTML = 'Selected template showcase';
-    fileNameDisplay.textContent = 'No file added';
-    templateSelect.value = 'none';
-    uploadedFilename = null;
-    if (downloadBtn) downloadBtn.dataset.url = '';
-    output.innerHTML = `
-      <div class="progress-bar-container">
-        <div class="progress-bar" id="progressBar"></div>
-      </div>
-      <button class="download-btn" id="downloadBtn">Download Generated File</button>
-    `;
-    showToast("Reset complete");
-
+  animateBtn.addEventListener('click', async () => {
+    const selected = templateSelect.value;
+    const selectedModel = modelSelect ? modelSelect.value : 'gpt-4.5';
+    console.log('Animation model:', selectedModel);
+    if (selected === 'vba') { await navigator.clipboard.writeText(MCQ_ANIMATION_CODE); showToast('MCQ Animation Code Copied', 3500); addNotification('Animation copied', 'MCQ animation code was copied to clipboard.'); return; }
+    if (selected === 'brand_template') { await navigator.clipboard.writeText(DRUG_ANIMATION_CODE); showToast('Drug Animation Code Copied', 3500); addNotification('Animation copied', 'Drug animation code was copied to clipboard.'); return; }
+    showToast('Select MCQ or Brand template to copy animation code', 3500);
   });
+
+  newProjectBtn.addEventListener('click', resetProject);
+  if (clearBtn) { clearBtn.addEventListener('click', resetProject); }
+
+  notificationBtn.addEventListener('mouseenter', () => {
+    notificationPanel.classList.add('show');
+    notificationDot.classList.remove('show');
+  });
+
+  notificationBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    notificationPanel.classList.toggle('show');
+    notificationDot.classList.remove('show');
+  });
+
+  notificationPanel.addEventListener('mouseleave', () => { notificationPanel.classList.remove('show'); });
+
+  document.addEventListener('click', (event) => {
+    if (!notificationPanel.contains(event.target) && !notificationBtn.contains(event.target)) notificationPanel.classList.remove('show');
+  });
+
+  document.querySelectorAll('[data-template-shortcut]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      templateSelect.value = btn.dataset.templateShortcut;
+      templateSelect.dispatchEvent(new Event('change'));
+    });
+  });
+
+  function openDocumentsModal() { renderDocumentsModal(); documentsModal.classList.add('show'); }
+  myDocumentsBtn.addEventListener('click', openDocumentsModal);
+  topDocumentsBtn.addEventListener('click', openDocumentsModal);
+  closeDocumentsModal.addEventListener('click', () => documentsModal.classList.remove('show'));
+  documentsModal.addEventListener('click', (event) => { if (event.target === documentsModal) documentsModal.classList.remove('show'); });
+
+  documentsList.addEventListener('click', (event) => {
+    const favoriteButton = event.target.closest('[data-favorite-index]');
+    if (favoriteButton && !favoriteButton.disabled) {
+      addFavorite(Number(favoriteButton.dataset.favoriteIndex));
+      return;
+    }
+    const downloadButton = event.target.closest('[data-download-doc-index]');
+    if (downloadButton && !downloadButton.disabled) {
+      const doc = documents[Number(downloadButton.dataset.downloadDocIndex)];
+      if (doc && doc.downloadUrl) { window.location.href = doc.downloadUrl; }
+    }
+  });
+
+  function openFavoritesModal() { renderFavoritesModal(); favoritesModal.classList.add('show'); }
+  favoritesBtn.addEventListener('click', openFavoritesModal);
+  closeFavoritesModal.addEventListener('click', () => favoritesModal.classList.remove('show'));
+  favoritesModal.addEventListener('click', (event) => { if (event.target === favoritesModal) favoritesModal.classList.remove('show'); });
+
+  favoritesList.addEventListener('click', (event) => {
+    const downloadButton = event.target.closest('[data-download-favorite-index]');
+    if (downloadButton && !downloadButton.disabled) {
+      const fav = favorites[Number(downloadButton.dataset.downloadFavoriteIndex)];
+      if (fav && fav.downloadUrl) { window.location.href = fav.downloadUrl; }
+      return;
+    }
+    const unfavButton = event.target.closest('[data-unfavorite-index]');
+    if (unfavButton) {
+      favorites.splice(Number(unfavButton.dataset.unfavoriteIndex), 1);
+      renderFavoritesModal();
+      renderDocumentsModal();
+      saveState();
+      showToast('Removed from favorites');
+    }
+  });
+
+  closePreviewModal.addEventListener('click', () => previewModal.classList.remove('show'));
+  previewModal.addEventListener('click', (event) => { if (event.target === previewModal) previewModal.classList.remove('show'); });
+
+  loadState();
+  renderRecentFiles();
+  renderDocumentsModal();
+  renderFavoritesModal();
+  renderNotifications();
 </script>
-
-
 </body>
 </html>

@@ -80,7 +80,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-
+# Global job progress tracker
+job_progress = {}
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -1031,40 +1032,404 @@ def write_normalized_mcqs_to_docx(normalized_text: str, output_path: str):
     doc.save(output_path)
 
 
-def convert_text_to_html_via_gpt(text: str) -> str:
-    prompt = f"""
-You are a document formatter.
+import base64
+from docx import Document
+from docx.oxml.ns import qn
+from lxml import etree
 
-Convert the content below into clean, valid HTML.
+def convert_docx_to_html_faithful(input_path: str) -> str:
+    """
+    Converts a .docx to a self-contained HTML string with:
+    - Embedded base64 images
+    - Preserved paragraph alignment, bold, italic, underline, font size, color
+    - Tables with borders
+    - Hyperlinks
+    - Heading levels (h1–h6)
+    - Ordered/unordered lists
+    """
+    doc = Document(input_path)
 
-STRICT RULES:
-- Return HTML ONLY
-- Use semantic tags: h1, h2, h3, p, ul, ol, li, table, tr, th, td where appropriate
-- Preserve logical structure
-- Do NOT add explanations
-- Do NOT use markdown
-- Do NOT wrap in <html> or <body> tags
+    # --- Build image map: rId -> base64 data URI ---
+    image_map = {}
+    for rel in doc.part.rels.values():
+        if "image" in rel.reltype:
+            try:
+                img_part = rel.target_part
+                ct = img_part.content_type  # e.g. image/png
+                ext = ct.split("/")[-1]
+                if ext == "jpeg":
+                    ext = "jpg"
+                b64 = base64.b64encode(img_part.blob).decode("utf-8")
+                image_map[rel.rId] = f"data:{ct};base64,{b64}"
+            except Exception as e:
+                print(f"Skipping image rel {rel.rId}: {e}")
 
-CONTENT:
-{text}
-"""
+    def rgb_from_hex(hex_str):
+        """Convert '1F2A3B' to '#1f2a3b'"""
+        if hex_str and len(hex_str) == 6:
+            return f"#{hex_str.lower()}"
+        return None
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": "You convert documents into clean HTML for web platforms.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0,
-    )
+    def pt_to_px(pt_val):
+        """Half-points (docx unit) to px"""
+        try:
+            return round(int(pt_val) / 2 * 1.333)
+        except:
+            return None
 
-    return (response.choices[0].message.content or "").strip()
+    def parse_run(run):
+        """Return an HTML snippet for a single run."""
+        text = run.text
+        if not text:
+            return ""
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        rpr = run._r.find(qn("w:rPr"))
+        styles = {}
+        classes = []
+
+        bold = run.bold
+        italic = run.italic
+        underline = run.underline
+        strike = False
+        color = None
+        font_size_px = None
+        font_family = None
+        bg_color = None
+        vertical = None  # superscript / subscript
+
+        if rpr is not None:
+            # Strike
+            if rpr.find(qn("w:strike")) is not None:
+                strike = True
+
+            # Color
+            color_el = rpr.find(qn("w:color"))
+            if color_el is not None:
+                val = color_el.get(qn("w:val"))
+                if val and val.upper() != "AUTO":
+                    color = rgb_from_hex(val)
+
+            # Highlight / background
+            hl = rpr.find(qn("w:highlight"))
+            if hl is not None:
+                hl_name = hl.get(qn("w:val"), "")
+                color_map = {
+                    "yellow": "#ffff00", "green": "#00ff00", "cyan": "#00ffff",
+                    "magenta": "#ff00ff", "blue": "#0000ff", "red": "#ff0000",
+                    "darkBlue": "#00008b", "darkCyan": "#008b8b", "darkGreen": "#006400",
+                    "darkMagenta": "#8b008b", "darkRed": "#8b0000", "darkYellow": "#808000",
+                    "darkGray": "#a9a9a9", "lightGray": "#d3d3d3", "black": "#000000",
+                }
+                bg_color = color_map.get(hl_name)
+
+            # Font size (w:sz is in half-points)
+            sz = rpr.find(qn("w:sz"))
+            if sz is not None:
+                font_size_px = pt_to_px(sz.get(qn("w:val")))
+
+            # Font family
+            fonts_el = rpr.find(qn("w:rFonts"))
+            if fonts_el is not None:
+                font_family = (
+                    fonts_el.get(qn("w:ascii"))
+                    or fonts_el.get(qn("w:hAnsi"))
+                    or fonts_el.get(qn("w:cs"))
+                )
+
+            # Superscript / subscript
+            vert = rpr.find(qn("w:vertAlign"))
+            if vert is not None:
+                vertical = vert.get(qn("w:val"))
+
+        if bold:
+            styles["font-weight"] = "bold"
+        if italic:
+            styles["font-style"] = "italic"
+        if underline and underline is not True:
+            styles["text-decoration"] = "underline"
+        elif underline:
+            styles["text-decoration"] = "underline"
+        if strike:
+            existing = styles.get("text-decoration", "")
+            styles["text-decoration"] = (existing + " line-through").strip()
+        if color:
+            styles["color"] = color
+        if bg_color:
+            styles["background-color"] = bg_color
+        if font_size_px:
+            styles["font-size"] = f"{font_size_px}px"
+        if font_family:
+            styles["font-family"] = f"'{font_family}', sans-serif"
+
+        style_str = "; ".join(f"{k}: {v}" for k, v in styles.items())
+        tag = "span"
+
+        html = f'<span style="{style_str}">{text}</span>' if style_str else text
+
+        if vertical == "superscript":
+            html = f"<sup>{html}</sup>"
+        elif vertical == "subscript":
+            html = f"<sub>{html}</sub>"
+
+        return html
+
+    def get_inline_images(paragraph_el):
+        """
+        Return list of <img> tags for all inline drawings in a paragraph element.
+        Maps blipFill rEmbed -> image_map.
+        """
+        imgs = []
+        for drawing in paragraph_el.findall(".//" + qn("w:drawing")):
+            for blip in drawing.findall(".//" + "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}blipFill") \
+                       + drawing.findall(".//" + "{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill"):
+                for b in blip:
+                    pass  # handled below
+
+            # Standard path
+            for blip in drawing.findall(
+                ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+            ) + drawing.findall(
+                ".//{http://schemas.openxmlformats.org/drawingml/2006/picture}blip"
+            ):
+                r_embed = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                if r_embed and r_embed in image_map:
+                    # Try to get width from extent
+                    width_style = ""
+                    for extent in drawing.findall(
+                        ".//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"
+                    ):
+                        cx = extent.get("cx")  # EMUs
+                        if cx:
+                            px = round(int(cx) / 914400 * 96)
+                            width_style = f' style="max-width:{px}px; width:100%;"'
+                    imgs.append(f'<img src="{image_map[r_embed]}"{width_style} />')
+
+        return imgs
+
+    def parse_paragraph(para):
+        """Return an HTML block string for one paragraph."""
+        ppr = para._p.find(qn("w:pPr"))
+        style_name = ""
+        align = ""
+        indent_left = ""
+        indent_right = ""
+        space_before = ""
+        space_after = ""
+        list_info = None  # (numId, ilvl)
+
+        if ppr is not None:
+            # Style
+            ps = ppr.find(qn("w:pStyle"))
+            if ps is not None:
+                style_name = ps.get(qn("w:val"), "")
+
+            # Alignment
+            jc = ppr.find(qn("w:jc"))
+            if jc is not None:
+                jc_val = jc.get(qn("w:val"), "")
+                align_map = {"center": "center", "right": "right",
+                             "both": "justify", "distribute": "justify"}
+                align = align_map.get(jc_val, "left")
+
+            # Indentation
+            ind = ppr.find(qn("w:ind"))
+            if ind is not None:
+                left = ind.get(qn("w:left"))
+                right = ind.get(qn("w:right"))
+                if left:
+                    try:
+                        indent_left = f"{round(int(left) / 914400 * 96 * 10)}px"
+                    except:
+                        pass
+                if right:
+                    try:
+                        indent_right = f"{round(int(right) / 914400 * 96 * 10)}px"
+                    except:
+                        pass
+
+            # Spacing
+            spacing = ppr.find(qn("w:spacing"))
+            if spacing is not None:
+                before = spacing.get(qn("w:before"))
+                after = spacing.get(qn("w:after"))
+                if before:
+                    try:
+                        space_before = f"{round(int(before) / 20)}pt"
+                    except:
+                        pass
+                if after:
+                    try:
+                        space_after = f"{round(int(after) / 20)}pt"
+                    except:
+                        pass
+
+            # List detection
+            num_pr = ppr.find(qn("w:numPr"))
+            if num_pr is not None:
+                num_id_el = num_pr.find(qn("w:numId"))
+                ilvl_el = num_pr.find(qn("w:ilvl"))
+                if num_id_el is not None:
+                    list_info = (
+                        num_id_el.get(qn("w:val"), "0"),
+                        int(ilvl_el.get(qn("w:val"), "0")) if ilvl_el is not None else 0,
+                    )
+
+        # Build inner HTML from runs + inline images
+        inner = ""
+        for child in para._p:
+            tag = etree.QName(child).localname if child.tag != etree.Comment else ""
+            if tag == "r":
+                # Inline images inside the run
+                imgs = get_inline_images(child)
+                inner += "".join(imgs)
+                # Run text
+                from docx.text.run import Run
+                run = Run(child, para)
+                inner += parse_run(run)
+            elif tag == "hyperlink":
+                href = ""
+                for rel_id_attr in [
+                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id",
+                    "r:id",
+                ]:
+                    rel_id = child.get(rel_id_attr)
+                    if rel_id and rel_id in doc.part.rels:
+                        href = doc.part.rels[rel_id].target_ref
+                        break
+                link_inner = ""
+                for r_el in child.findall(qn("w:r")):
+                    from docx.text.run import Run
+                    link_inner += parse_run(Run(r_el, para))
+                inner += f'<a href="{href}" target="_blank">{link_inner}</a>'
+            elif tag == "drawing":
+                imgs = get_inline_images(child)
+                inner += "".join(imgs)
+
+        inner = inner.strip()
+        if not inner:
+            return "<p style='margin:0; min-height:1em;'>&nbsp;</p>"
+
+        # Determine HTML tag from style name
+        heading_map = {
+            "Heading1": "h1", "heading1": "h1", "Heading 1": "h1",
+            "Heading2": "h2", "heading2": "h2", "Heading 2": "h2",
+            "Heading3": "h3", "heading3": "h3", "Heading 3": "h3",
+            "Heading4": "h4", "Heading5": "h5", "Heading6": "h6",
+            "Title": "h1", "Subtitle": "h2",
+        }
+        html_tag = heading_map.get(style_name, "p")
+
+        # Build paragraph CSS
+        p_styles = {}
+        if align:
+            p_styles["text-align"] = align
+        if indent_left:
+            p_styles["padding-left"] = indent_left
+        if indent_right:
+            p_styles["padding-right"] = indent_right
+        if space_before:
+            p_styles["margin-top"] = space_before
+        if space_after:
+            p_styles["margin-bottom"] = space_after
+        else:
+            p_styles["margin-bottom"] = "4pt"
+
+        if list_info:
+            ilvl = list_info[1]
+            p_styles["padding-left"] = f"{(ilvl + 1) * 24}px"
+            p_styles["list-style-position"] = "inside"
+            p_styles["display"] = "list-item"
+
+        style_str = "; ".join(f"{k}: {v}" for k, v in p_styles.items())
+        return f'<{html_tag} style="{style_str}">{inner}</{html_tag}>'
+
+    def parse_table(table):
+        rows_html = ""
+        for row in table.rows:
+            cells_html = ""
+            for cell in row.cells:
+                tc = cell._tc
+                # Colspan
+                grid_span = tc.find(qn("w:tcPr") + "/" + qn("w:gridSpan"))
+                colspan = ""
+                if grid_span is not None:
+                    span_val = grid_span.get(qn("w:val"), "1")
+                    if span_val != "1":
+                        colspan = f' colspan="{span_val}"'
+
+                # Background color
+                tc_pr = tc.find(qn("w:tcPr"))
+                cell_bg = ""
+                if tc_pr is not None:
+                    shd = tc_pr.find(qn("w:shd"))
+                    if shd is not None:
+                        fill = shd.get(qn("w:fill"))
+                        if fill and fill.upper() != "AUTO" and fill != "FFFFFF":
+                            cell_bg = f"background-color:#{fill.lower()};"
+
+                cell_inner = "".join(parse_paragraph(p) for p in cell.paragraphs)
+                # Also handle nested tables
+                for nested_tbl in cell._tc.findall(qn("w:tbl")):
+                    from docx.table import Table as DocxTable
+                    cell_inner += parse_table(DocxTable(nested_tbl, cell._tc))
+
+                cells_html += (
+                    f'<td{colspan} style="border:1px solid #ccc; padding:6px 10px; '
+                    f'vertical-align:top; {cell_bg}">{cell_inner}</td>'
+                )
+            rows_html += f"<tr>{cells_html}</tr>"
+
+        return (
+            f'<table style="border-collapse:collapse; width:100%; '
+            f'margin:12px 0;">{rows_html}</table>'
+        )
+
+    # --- Main body pass ---
+    body_html = ""
+    # Walk the document body XML directly to preserve order of paragraphs + tables
+    body_el = doc.element.body
+    para_idx = 0
+    table_idx = 0
+
+    for child in body_el:
+        local = etree.QName(child).localname
+        if local == "p":
+            body_html += parse_paragraph(doc.paragraphs[para_idx])
+            para_idx += 1
+        elif local == "tbl":
+            body_html += parse_table(doc.tables[table_idx])
+            table_idx += 1
+        # sectPr and others are skipped
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Document</title>
+<style>
+  body {{
+    font-family: 'Calibri', 'Arial', sans-serif;
+    font-size: 12pt;
+    line-height: 1.5;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 24px;
+    color: #111;
+  }}
+  img {{ display: inline-block; vertical-align: middle; }}
+  table {{ page-break-inside: avoid; }}
+  h1, h2, h3, h4, h5, h6 {{ margin-top: 16pt; margin-bottom: 4pt; }}
+  a {{ color: #1a0dab; }}
+</style>
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
+
+    return html
 
 
 # ---------------- PPT HELPERS ----------------
@@ -2711,260 +3076,258 @@ def upload_file():
 
     return jsonify({"error": "Invalid file type"}), 400
 
-
 @app.route("/generate", methods=["POST"])
 def generate_output():
+    import uuid as _uuid
+
+    job_id = _uuid.uuid4().hex
+    job_progress[job_id] = {"pct": 3, "state": "Received request", "eta": "Starting..."}
+
+    def _set(pct, state, eta=""):
+        job_progress[job_id] = {"pct": pct, "state": state, "eta": eta}
+
     try:
         data = request.get_json(silent=True) or request.form
-
         filename = data.get("filename")
         template_choice = data.get("template")
         cbt_topic = (data.get("cbt_topic") or "").strip()
 
-        # ---------- CBT GENERATOR ----------
+        if not template_choice:
+            return jsonify({"error": "Missing parameters"}), 400
+
+        # ── CBT GENERATOR ──────────────────────────────────────────────────
         if template_choice == "cbt":
             if not cbt_topic:
                 return jsonify({"error": "Please enter a topic for CBT Generator"}), 400
-
+            _set(10, "Sending to GPT-4o", "~15 seconds")
             prompt = f"""
 Generate 25 MCQs on the topic: "{cbt_topic}"
-
 Format MUST match EXACTLY this structure:
-
 **1.** *Question text here…*
-
 a. Option A
 b. Option B
 c. Option C
 d. Option D
-
 **Answer: c**
 **Explanation:** *Short explanation here.*
-
 Rules:
 - Same line breaks
 - Numbered 1–25
 - Keep formatting consistent
 """
-
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You generate perfectly formatted medical MCQs.",
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
+                messages=[{"role": "system", "content": "You generate perfectly formatted medical MCQs."}, {"role": "user", "content": prompt}],
                 temperature=0,
             )
-
+            _set(80, "Building Word document", "~3 seconds")
             content = response.choices[0].message.content or ""
-
             output_filename = f"CBT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
-
             doc = Document()
-
             for line in content.split("\n"):
                 line = line.rstrip()
-
                 if line.startswith("**") and line.endswith("**"):
-                    p = doc.add_paragraph()
-                    r = p.add_run(line.replace("**", ""))
-                    r.bold = True
-                    continue
-
+                    p = doc.add_paragraph(); r = p.add_run(line.replace("**", "")); r.bold = True; continue
                 if line.startswith("**Answer"):
-                    p = doc.add_paragraph()
-                    r = p.add_run(line.replace("**", ""))
-                    r.bold = True
-                    continue
-
+                    p = doc.add_paragraph(); r = p.add_run(line.replace("**", "")); r.bold = True; continue
                 if line.startswith("**Explanation"):
-                    p = doc.add_paragraph()
-                    r = p.add_run(line.replace("**", ""))
-                    r.bold = True
-                    r.italic = True
-                    continue
-
+                    p = doc.add_paragraph(); r = p.add_run(line.replace("**", "")); r.bold = True; r.italic = True; continue
                 if line.startswith("*") and line.endswith("*"):
-                    p = doc.add_paragraph()
-                    r = p.add_run(line.replace("*", ""))
-                    r.italic = True
-                    continue
-
-                p = doc.add_paragraph()
-                p.add_run(line)
-
+                    p = doc.add_paragraph(); r = p.add_run(line.replace("*", "")); r.italic = True; continue
+                p = doc.add_paragraph(); p.add_run(line)
             doc.save(output_path)
+            _set(100, "Done", "Complete")
+            return jsonify({"message": "✅ CBT Word file generated!", "download_url": f"/download/{output_filename}", "job_id": job_id})
 
-            return jsonify(
-                {
-                    "message": "✅ CBT Word file generated!",
-                    "download_url": f"/download/{output_filename}",
-                }
-            )
-
-        # ---------- ALL FILE-BASED MODES ----------
-        if not filename or not template_choice:
-            return jsonify({"error": "Missing parameters"}), 400
-
+        # ── FILE-BASED MODES ───────────────────────────────────────────────
+        if not filename:
+            return jsonify({"error": "Missing filename"}), 400
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         if not os.path.exists(filepath):
             return jsonify({"error": f"Uploaded file not found: {filepath}"}), 404
 
-        # ---------- WORD CHAPTER TRANSLATOR ----------
+        # ── CHAPTER TRANSLATE ──────────────────────────────────────────────
         if template_choice == "chapter_translate":
             ext = filename.rsplit(".", 1)[-1].lower()
-
             if ext != "docx":
-                return jsonify({
-                    "error": "Chapter Translator only supports Word .docx files."
-                }), 400
-
+                return jsonify({"error": "Chapter Translator only supports Word .docx files."}), 400
+            _set(10, "Reading document", "~45 seconds")
             output_filename = f"translated_chapter_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
 
-            translate_docx_keep_layout(filepath, output_path)
+            # Patch translate_texts_to_french_batch to report progress
+            doc_obj = Document(filepath)
+            paragraphs = []
+            def _collect(container):
+                for p in container.paragraphs:
+                    if p.text.strip(): paragraphs.append(p)
+                for t in container.tables:
+                    for row in t.rows:
+                        for cell in row.cells: _collect(cell)
+            _collect(doc_obj)
+            for section in doc_obj.sections:
+                _collect(section.header); _collect(section.footer)
+            from docx.text.paragraph import Paragraph as _Para
+            for txbx in doc_obj.element.xpath(".//*[local-name()='txbxContent']"):
+                for p_el in txbx.xpath(".//*[local-name()='p']"):
+                    p = _Para(p_el, doc_obj)
+                    if p.text.strip(): paragraphs.append(p)
 
-            return jsonify({
-                "message": "✅ Word chapter translated to French",
-                "download_url": f"/download/{output_filename}",
-            })
+            all_runs = []
+            for paragraph in paragraphs:
+                for run in paragraph.runs:
+                    if run.text and run.text.strip():
+                        if not run._element.xpath(".//*[local-name()='drawing']"):
+                            all_runs.append(run)
 
+            batch_size = 35
+            total_batches = max(1, (len(all_runs) + batch_size - 1) // batch_size)
+            for batch_num, i in enumerate(range(0, len(all_runs), batch_size)):
+                pct = 10 + int((batch_num / total_batches) * 78)
+                remaining_batches = total_batches - batch_num
+                eta_secs = remaining_batches * 4
+                _set(pct, f"Translating batch {batch_num + 1}/{total_batches}", f"~{eta_secs}s remaining")
+                batch = all_runs[i:i + batch_size]
+                translated_texts = translate_texts_to_french_batch([r.text for r in batch])
+                for run, translated in zip(batch, translated_texts):
+                    run.text = translated
+
+            _set(92, "Saving document", "~2 seconds")
+            translate_docx_embedded_images(doc_obj)
+            doc_obj.save(output_path)
+            _set(100, "Done", "Complete")
+            return jsonify({"message": "✅ Word chapter translated to French", "download_url": f"/download/{output_filename}", "job_id": job_id})
+
+        # ── DOCX TO HTML ───────────────────────────────────────────────────
+        if template_choice == "docx_to_html":
+            ext = filename.rsplit(".", 1)[-1].lower()
+            if ext != "docx":
+                return jsonify({"error": "HTML converter only supports .docx files"}), 400
+            _set(20, "Parsing document structure", "~3 seconds")
+            output_filename = f"converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
+            _set(50, "Embedding images", "~2 seconds")
+            html_output = convert_docx_to_html_faithful(filepath)
+            _set(90, "Writing HTML file", "~1 second")
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(html_output)
+            _set(100, "Done", "Complete")
+            return jsonify({"message": "✅ HTML generated successfully", "download_url": f"/download/{output_filename}", "job_id": job_id})
+
+        # ── All remaining modes need file text ─────────────────────────────
+        _set(8, "Extracting text", "~2 seconds")
         file_content = extract_text(filepath)
         if not file_content.strip():
             return jsonify({"error": "File is empty"}), 400
 
-        # ---------- DOCX TO HTML ----------
-        if template_choice == "docx_to_html":
-            html_output = convert_text_to_html_via_gpt(file_content)
-
-            output_filename = f"converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
-
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(html_output)
-
-            return jsonify(
-                {
-                    "message": "✅ HTML generated successfully",
-                    "download_url": f"/download/{output_filename}",
-                }
-            )
-
-        # ---------- BRAND / DRUG TEMPLATES ----------
+        # ── BRAND / DRUG TEMPLATES ─────────────────────────────────────────
         if template_choice in {"brand_template", "brand_template_mobile"}:
+            _set(20, "Parsing drug blocks", "~2 seconds")
             drug_blocks = parse_drug_brand_blocks(file_content)
-
             if not drug_blocks:
                 return jsonify({"error": "No brand/generic blocks were found in this file."}), 400
-
+            _set(55, "Building presentation", "~5 seconds")
             output_filename = f"generated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
-
-            if template_choice == "brand_template":
-                success = create_brand_template_presentation(drug_blocks, output_path)
-            else:
-                success = create_brand_template_presentation_mobile(drug_blocks, output_path)
-
+            success = create_brand_template_presentation(drug_blocks, output_path) if template_choice == "brand_template" else create_brand_template_presentation_mobile(drug_blocks, output_path)
+            _set(100, "Done", "Complete")
             if success:
-                return jsonify(
-                    {
-                        "message": "File generated successfully",
-                        "download_url": f"/download/{output_filename}",
-                    }
-                )
-
+                return jsonify({"message": "File generated successfully", "download_url": f"/download/{output_filename}", "job_id": job_id})
             return jsonify({"error": "Failed to generate file"}), 500
 
-        # ---------- UNIFIED MCQ EXTRACTION FOR ALL MCQ TOOLS ----------
-        mcqs, normalized_mcq_text = extract_mcqs_with_cbt_standard(file_content)
+        # ── MCQ EXTRACTION ─────────────────────────────────────────────────
+        _set(15, "Normalizing MCQs with GPT", "~20 seconds")
+        chunks = split_text_for_llm(file_content)
+        all_mcqs_raw = []
+        total_chunks = len(chunks)
+        for chunk_num, chunk in enumerate(chunks):
+            pct = 15 + int((chunk_num / total_chunks) * 55)
+            _set(pct, f"Processing chunk {chunk_num + 1}/{total_chunks}", f"~{(total_chunks - chunk_num) * 5}s remaining")
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You normalize messy exam content into strict MCQ format."},
+                    {"role": "user", "content": build_mcq_normalization_prompt(chunk)},
+                ],
+                temperature=0,
+            )
+            chunk_text = normalize_mcq_output_text(response.choices[0].message.content or "")
+            chunk_mcqs = parse_normalized_mcq_text(chunk_text)
+            all_mcqs_raw.extend(chunk_mcqs)
+
+        normalized_mcq_text = render_normalized_mcq_text(all_mcqs_raw)
+        mcqs = all_mcqs_raw
+
+        if not mcqs:
+            mcqs = regex_extract_mcqs_fallback(file_content)
+            normalized_mcq_text = render_normalized_mcq_text(mcqs) if mcqs else ""
 
         if not mcqs:
             return jsonify({"error": "No MCQs could be extracted from this file."}), 400
 
-        # ---------- CBT PARSER EXPORT ----------
+        # ── CBT PARSER ─────────────────────────────────────────────────────
         if template_choice == "cbt_parser":
+            _set(85, "Writing Word document", "~2 seconds")
             output_filename = f"CBT_PARSED_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
             write_normalized_mcqs_to_docx(normalized_mcq_text, output_path)
+            _set(100, "Done", "Complete")
+            return jsonify({"message": "✅ File parsed and formatted successfully", "download_url": f"/download/{output_filename}", "job_id": job_id})
 
-            return jsonify(
-                {
-                    "message": "✅ File parsed and formatted successfully",
-                    "download_url": f"/download/{output_filename}",
-                }
-            )
-
-        # ---------- MCQ GRADER ----------
+        # ── MCQ GRADER ─────────────────────────────────────────────────────
         if template_choice == "mcq_grader":
-            grader_mcqs = []
-            for mcq in mcqs:
-                ans = (mcq.get("answer") or "").upper()
-                if ans in {"A", "B", "C", "D"}:
-                    grader_mcqs.append(
-                        {
-                            "question": mcq["question"],
-                            "answer": ans,
-                        }
-                    )
-
+            grader_mcqs = [{"question": m["question"], "answer": m["answer"]} for m in mcqs if (m.get("answer") or "").upper() in {"A", "B", "C", "D"}]
             if not grader_mcqs:
-                return jsonify(
-                    {"error": "No MCQs with clear A–D answers were found in this file."}
-                ), 400
+                return jsonify({"error": "No MCQs with clear A–D answers were found."}), 400
+            _set(100, "Done", "Complete")
+            return jsonify({"message": "MCQs loaded for grading.", "mcqs": grader_mcqs, "job_id": job_id})
 
-            return jsonify(
-                {
-                    "message": "MCQs loaded for grading.",
-                    "mcqs": grader_mcqs,
-                }
-            )
-
-        # ---------- PPT / VBA GENERATION ----------
+        # ── PPT GENERATION ─────────────────────────────────────────────────
+        _set(75, "Building presentation", f"~{max(3, len(mcqs) // 5)}s remaining")
         output_filename = f"generated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
         output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
-
-        if template_choice == "vba":
-            success = create_vba_template_presentation(mcqs, output_path)
-        elif template_choice == "mcq2":
-            success = create_mcq_generator2_exact(mcqs, output_path)
-        elif template_choice == "mcq3":
-            success = create_mcq_generator3_exact(mcqs, output_path)
-        elif template_choice == "vba_mobile":
-            success = create_vba_template_presentation_mobile(mcqs, output_path)
-        elif template_choice == "ppt":
-            success = create_ppt_template_presentation(mcqs, output_path)
-        else:
+        fn_map = {"vba": create_vba_template_presentation, "mcq2": create_mcq_generator2_exact, "mcq3": create_mcq_generator3_exact, "vba_mobile": create_vba_template_presentation_mobile, "ppt": create_ppt_template_presentation}
+        if template_choice not in fn_map:
             return jsonify({"error": "Invalid template type"}), 400
-
+        success = fn_map[template_choice](mcqs, output_path)
+        _set(100, "Done", "Complete")
         if success:
-            return jsonify(
-                {
-                    "message": "File generated successfully",
-                    "download_url": f"/download/{output_filename}",
-                }
-            )
-
+            return jsonify({"message": "File generated successfully", "download_url": f"/download/{output_filename}", "job_id": job_id})
         return jsonify({"error": "Failed to generate file"}), 500
 
     except Exception as e:
         print(f"/generate error: {e}")
+        job_progress[job_id] = {"pct": 0, "state": "Failed", "eta": str(e)}
         return jsonify({"error": f"Generation failed: {type(e).__name__}: {str(e)}"}), 500
+
 
 
 @app.route("/download/<filename>")
 def download_file(filename):
     return send_from_directory(app.config["GENERATED_FOLDER"], filename, as_attachment=True)
 
-
+@app.route("/progress/<job_id>")
+def progress_stream(job_id):
+    def generate():
+        last = -1
+        for _ in range(600):  # max 60s polling
+            info = job_progress.get(job_id)
+            if info is None:
+                yield f"data: {{}}\n\n"
+                break
+            if info["pct"] != last:
+                import json
+                last = info["pct"]
+                yield f"data: {json.dumps(info)}\n\n"
+            if info["pct"] >= 100:
+                break
+            import time as _t
+            _t.sleep(0.1)
+    return app.response_class(generate(), mimetype="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 # ---------------- RUN APP ----------------
 if __name__ == "__main__":
     if not PPTX_AVAILABLE:
         print("WARNING: python-pptx is not installed. Please run: pip install python-pptx")
-    app.run(host="0.0.0.0", port=8502, debug=False)
+    app.run(host="0.0.0.0", port=8502, debug=False, threaded=True)
