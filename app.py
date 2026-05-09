@@ -1038,457 +1038,576 @@ from docx.oxml.ns import qn
 from lxml import etree
 
 def convert_docx_to_html_faithful(input_path: str) -> str:
-    """
-    Converts a .docx to a self-contained HTML string with:
-    - Embedded base64 images
-    - Preserved paragraph alignment, bold, italic, underline, font size, color
-    - Tables with borders
-    - Hyperlinks
-    - Heading levels (h1–h6)
-    - Ordered/unordered lists
-    """
+    import base64
+    from docx import Document
+    from docx.oxml.ns import qn
+    from lxml import etree
+    from docx.text.run import Run
+
     doc = Document(input_path)
 
-    # --- Build image map: rId -> base64 data URI ---
+    # ── Image map ──────────────────────────────────────────────────────────
     image_map = {}
     for rel in doc.part.rels.values():
         if "image" in rel.reltype:
             try:
                 img_part = rel.target_part
-                ct = img_part.content_type  # e.g. image/png
+                ct = img_part.content_type
                 ext = ct.split("/")[-1]
-                if ext == "jpeg":
-                    ext = "jpg"
+                if ext == "jpeg": ext = "jpg"
                 b64 = base64.b64encode(img_part.blob).decode("utf-8")
-                image_map[rel.rId] = f"data:{ct};base64,{b64}"
+                image_map[rel.rId] = (f"data:{ct};base64,{b64}", ct)
             except Exception as e:
                 print(f"Skipping image rel {rel.rId}: {e}")
 
-    def rgb_from_hex(hex_str):
-        """Convert '1F2A3B' to '#1f2a3b'"""
-        if hex_str and len(hex_str) == 6:
-            return f"#{hex_str.lower()}"
+    # ── Unit helpers ────────────────────────────────────────────────────────
+    def emu_to_px(emu):
+        try: return round(int(emu) / 914400 * 96)
+        except: return None
+
+    def half_pt_to_px(hp):
+        try: return round(int(hp) / 2 * 1.333)
+        except: return None
+
+    def twip_to_px(tw):
+        try: return round(int(tw) / 20 * 1.333)
+        except: return None
+
+    def twip_to_pt(tw):
+        try: return round(int(tw) / 20, 1)
+        except: return None
+
+    def rgb_hex(val):
+        if val and len(val) == 6 and val.upper() != "AUTO":
+            return f"#{val.lower()}"
         return None
 
-    def pt_to_px(pt_val):
-        """Half-points (docx unit) to px"""
+    # ── Numbering helper ────────────────────────────────────────────────────
+    _numbering_cache = {}
+    def get_list_info(ppr):
+        if ppr is None: return None
+        num_pr = ppr.find(qn("w:numPr"))
+        if num_pr is None: return None
+        num_id_el = num_pr.find(qn("w:numId"))
+        ilvl_el   = num_pr.find(qn("w:ilvl"))
+        if num_id_el is None: return None
+        num_id = num_id_el.get(qn("w:val"), "0")
+        ilvl   = int(ilvl_el.get(qn("w:val"), "0")) if ilvl_el is not None else 0
+
+        cache_key = (num_id, ilvl)
+        if cache_key in _numbering_cache:
+            return _numbering_cache[cache_key]
+
+        is_ordered = False
         try:
-            return round(int(pt_val) / 2 * 1.333)
-        except:
-            return None
+            nb = doc.part.numbering_part
+            ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+            nxml = nb._element
+            num_el = next((n for n in nxml.findall(f'{{{ns}}}num')
+                           if n.get(f'{{{ns}}}numId') == num_id), None)
+            if num_el is not None:
+                abs_id_el = num_el.find(f'{{{ns}}}abstractNumId')
+                if abs_id_el is not None:
+                    abs_id = abs_id_el.get(f'{{{ns}}}val')
+                    abs_el = next((a for a in nxml.findall(f'{{{ns}}}abstractNum')
+                                   if a.get(f'{{{ns}}}abstractNumId') == abs_id), None)
+                    if abs_el is not None:
+                        lvl_el = next((l for l in abs_el.findall(f'{{{ns}}}lvl')
+                                       if l.get(f'{{{ns}}}ilvl') == str(ilvl)), None)
+                        if lvl_el is not None:
+                            fmt_el = lvl_el.find(f'{{{ns}}}numFmt')
+                            if fmt_el is not None:
+                                fmt = fmt_el.get(f'{{{ns}}}val', '')
+                                is_ordered = fmt in ('decimal','lowerLetter','upperLetter',
+                                                     'lowerRoman','upperRoman')
+        except Exception:
+            pass
 
-    def parse_run(run):
-        """Return an HTML snippet for a single run."""
-        text = run.text
-        if not text:
-            return ""
-        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        result = (num_id, ilvl, is_ordered)
+        _numbering_cache[cache_key] = result
+        return result
 
-        rpr = run._r.find(qn("w:rPr"))
-        styles = {}
-        classes = []
-
-        bold = run.bold
-        italic = run.italic
-        underline = run.underline
-        strike = False
-        color = None
-        font_size_px = None
-        font_family = None
-        bg_color = None
-        vertical = None  # superscript / subscript
-
-        if rpr is not None:
-            # Strike
-            if rpr.find(qn("w:strike")) is not None:
-                strike = True
-
-            # Color
-            color_el = rpr.find(qn("w:color"))
-            if color_el is not None:
-                val = color_el.get(qn("w:val"))
-                if val and val.upper() != "AUTO":
-                    color = rgb_from_hex(val)
-
-            # Highlight / background
-            hl = rpr.find(qn("w:highlight"))
-            if hl is not None:
-                hl_name = hl.get(qn("w:val"), "")
-                color_map = {
-                    "yellow": "#ffff00", "green": "#00ff00", "cyan": "#00ffff",
-                    "magenta": "#ff00ff", "blue": "#0000ff", "red": "#ff0000",
-                    "darkBlue": "#00008b", "darkCyan": "#008b8b", "darkGreen": "#006400",
-                    "darkMagenta": "#8b008b", "darkRed": "#8b0000", "darkYellow": "#808000",
-                    "darkGray": "#a9a9a9", "lightGray": "#d3d3d3", "black": "#000000",
-                }
-                bg_color = color_map.get(hl_name)
-
-            # Font size (w:sz is in half-points)
-            sz = rpr.find(qn("w:sz"))
-            if sz is not None:
-                font_size_px = pt_to_px(sz.get(qn("w:val")))
-
-            # Font family
-            fonts_el = rpr.find(qn("w:rFonts"))
-            if fonts_el is not None:
-                font_family = (
-                    fonts_el.get(qn("w:ascii"))
-                    or fonts_el.get(qn("w:hAnsi"))
-                    or fonts_el.get(qn("w:cs"))
-                )
-
-            # Superscript / subscript
-            vert = rpr.find(qn("w:vertAlign"))
-            if vert is not None:
-                vertical = vert.get(qn("w:val"))
-
-        if bold:
-            styles["font-weight"] = "bold"
-        if italic:
-            styles["font-style"] = "italic"
-        if underline and underline is not True:
-            styles["text-decoration"] = "underline"
-        elif underline:
-            styles["text-decoration"] = "underline"
-        if strike:
-            existing = styles.get("text-decoration", "")
-            styles["text-decoration"] = (existing + " line-through").strip()
-        if color:
-            styles["color"] = color
-        if bg_color:
-            styles["background-color"] = bg_color
-        if font_size_px:
-            styles["font-size"] = f"{font_size_px}px"
-        if font_family:
-            styles["font-family"] = f"'{font_family}', sans-serif"
-
-        style_str = "; ".join(f"{k}: {v}" for k, v in styles.items())
-        tag = "span"
-
-        html = f'<span style="{style_str}">{text}</span>' if style_str else text
-
-        if vertical == "superscript":
-            html = f"<sup>{html}</sup>"
-        elif vertical == "subscript":
-            html = f"<sub>{html}</sub>"
-
-        return html
-
-    def get_inline_images(paragraph_el):
-        """
-        Return list of <img> tags for all inline drawings in a paragraph element.
-        Maps blipFill rEmbed -> image_map.
-        """
+    # ── Inline image extractor ──────────────────────────────────────────────
+    def get_inline_images(el):
         imgs = []
-        for drawing in paragraph_el.findall(".//" + qn("w:drawing")):
-            for blip in drawing.findall(".//" + "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}blipFill") \
-                       + drawing.findall(".//" + "{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill"):
-                for b in blip:
-                    pass  # handled below
-
-            # Standard path
+        for drawing in el.findall(".//" + qn("w:drawing")):
             for blip in drawing.findall(
                 ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
-            ) + drawing.findall(
-                ".//{http://schemas.openxmlformats.org/drawingml/2006/picture}blip"
             ):
                 r_embed = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
                 if r_embed and r_embed in image_map:
-                    # Try to get width from extent
+                    src, ct = image_map[r_embed]
                     width_style = ""
                     for extent in drawing.findall(
                         ".//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"
                     ):
-                        cx = extent.get("cx")  # EMUs
+                        cx = extent.get("cx")
                         if cx:
-                            px = round(int(cx) / 914400 * 96)
-                            width_style = f' style="max-width:{px}px; width:100%;"'
-                    imgs.append(f'<img src="{image_map[r_embed]}"{width_style} />')
-
+                            px = emu_to_px(cx)
+                            if px: width_style = f' style="width:{px}px;max-width:100%;"'
+                    imgs.append(f'<img src="{src}"{width_style} />')
         return imgs
 
+    # ── Run parser ──────────────────────────────────────────────────────────
+    def parse_run(run_el, para):
+        run = Run(run_el, para)
+        text = run.text or ""
+        if not text: return ""
+
+        escaped = (text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                       .replace('"','&quot;'))
+
+        rpr = run_el.find(qn("w:rPr"))
+        styles = {}
+        bold = italic = underline = strike = False
+        color = bg_color = font_family = None
+        font_size_px = None
+        vertical = None
+
+        # Check rPr on the run itself
+        if rpr is not None:
+            if rpr.find(qn("w:b")) is not None:
+                b_el = rpr.find(qn("w:b"))
+                if b_el.get(qn("w:val"), "true") not in ("false","0"): bold = True
+            if rpr.find(qn("w:i")) is not None:
+                i_el = rpr.find(qn("w:i"))
+                if i_el.get(qn("w:val"), "true") not in ("false","0"): italic = True
+            if rpr.find(qn("w:u")) is not None:
+                u_el = rpr.find(qn("w:u"))
+                if u_el.get(qn("w:val"), "single") not in ("none","false","0"): underline = True
+            if rpr.find(qn("w:strike")) is not None: strike = True
+            color_el = rpr.find(qn("w:color"))
+            if color_el is not None:
+                color = rgb_hex(color_el.get(qn("w:val")))
+            hl = rpr.find(qn("w:highlight"))
+            if hl is not None:
+                hl_map = {"yellow":"#ffff00","green":"#00ff00","cyan":"#00ffff",
+                          "magenta":"#ff00ff","blue":"#0000ff","red":"#ff0000",
+                          "darkBlue":"#00008b","darkCyan":"#008b8b","darkGreen":"#006400",
+                          "darkMagenta":"#8b008b","darkRed":"#8b0000","darkYellow":"#808000",
+                          "darkGray":"#a9a9a9","lightGray":"#d3d3d3","black":"#000000"}
+                bg_color = hl_map.get(hl.get(qn("w:val"),""))
+            sz = rpr.find(qn("w:sz"))
+            if sz is not None:
+                font_size_px = half_pt_to_px(sz.get(qn("w:val")))
+            fonts_el = rpr.find(qn("w:rFonts"))
+            if fonts_el is not None:
+                font_family = (fonts_el.get(qn("w:ascii")) or
+                               fonts_el.get(qn("w:hAnsi")) or
+                               fonts_el.get(qn("w:cs")))
+            vert = rpr.find(qn("w:vertAlign"))
+            if vert is not None: vertical = vert.get(qn("w:val"))
+
+        if bold:           styles["font-weight"] = "bold"
+        if italic:         styles["font-style"]  = "italic"
+        if underline:      styles["text-decoration"] = "underline"
+        if strike:
+            td = styles.get("text-decoration","")
+            styles["text-decoration"] = (td + " line-through").strip()
+        if color:          styles["color"] = color
+        if bg_color:       styles["background-color"] = bg_color
+        if font_size_px:   styles["font-size"] = f"{font_size_px}px"
+        if font_family:    styles["font-family"] = f"'{font_family}',sans-serif"
+
+        style_str = ";".join(f"{k}:{v}" for k,v in styles.items())
+        html = f'<span style="{style_str}">{escaped}</span>' if style_str else escaped
+
+        if vertical == "superscript": html = f"<sup>{html}</sup>"
+        elif vertical == "subscript": html = f"<sub>{html}</sub>"
+        return html
+
+    # ── Paragraph parser ────────────────────────────────────────────────────
     def parse_paragraph(para):
-        """Return an HTML block string for one paragraph."""
         ppr = para._p.find(qn("w:pPr"))
         style_name = ""
-        align = ""
-        indent_left = ""
-        indent_right = ""
-        space_before = ""
-        space_after = ""
-        list_info = None  # (numId, ilvl)
+        align = None
+        indent_left_px = None
+        indent_right_px = None
+        indent_firstline_px = None
+        space_before_pt = None
+        space_after_pt = None
+        line_height = None
+        shading_color = None
 
         if ppr is not None:
-            # Style
             ps = ppr.find(qn("w:pStyle"))
-            if ps is not None:
-                style_name = ps.get(qn("w:val"), "")
+            if ps is not None: style_name = ps.get(qn("w:val"), "")
 
-            # Alignment
             jc = ppr.find(qn("w:jc"))
             if jc is not None:
-                jc_val = jc.get(qn("w:val"), "")
-                align_map = {"center": "center", "right": "right",
-                             "both": "justify", "distribute": "justify"}
-                align = align_map.get(jc_val, "left")
+                jc_map = {"center":"center","right":"right","both":"justify",
+                          "distribute":"justify","left":"left"}
+                align = jc_map.get(jc.get(qn("w:val"),""), None)
 
-            # Indentation
             ind = ppr.find(qn("w:ind"))
             if ind is not None:
                 left = ind.get(qn("w:left"))
                 right = ind.get(qn("w:right"))
-                if left:
-                    try:
-                        indent_left = f"{round(int(left) / 914400 * 96 * 10)}px"
-                    except:
-                        pass
-                if right:
-                    try:
-                        indent_right = f"{round(int(right) / 914400 * 96 * 10)}px"
-                    except:
-                        pass
+                first = ind.get(qn("w:firstLine"))
+                hanging = ind.get(qn("w:hanging"))
+                if left: indent_left_px = twip_to_px(left)
+                if right: indent_right_px = twip_to_px(right)
+                if first: indent_firstline_px = twip_to_px(first)
+                if hanging:
+                    hp = twip_to_px(hanging)
+                    if hp and indent_left_px:
+                        indent_firstline_px = -hp
 
-            # Spacing
             spacing = ppr.find(qn("w:spacing"))
             if spacing is not None:
                 before = spacing.get(qn("w:before"))
-                after = spacing.get(qn("w:after"))
-                line = spacing.get(qn("w:line"))
+                after  = spacing.get(qn("w:after"))
+                line   = spacing.get(qn("w:line"))
                 line_rule = spacing.get(qn("w:lineRule"))
-                if before:
-                    try: space_before = f"{round(int(before) / 20)}pt"
-                    except: pass
-                if after:
-                    try: space_after = f"{round(int(after) / 20)}pt"
-                    except: pass
-                if line and line_rule in ("auto", None, ""):
+                if before: space_before_pt = twip_to_pt(before)
+                if after:  space_after_pt  = twip_to_pt(after)
+                if line:
                     try:
-                        lh = round(int(line) / 240, 2)
-                        p_styles["line-height"] = str(lh)
+                        lval = int(line)
+                        if line_rule in ("auto", None, ""):
+                            line_height = round(lval / 240, 2)
+                        elif line_rule == "exact":
+                            line_height = f"{twip_to_pt(line)}pt"
+                        elif line_rule == "atLeast":
+                            line_height = f"{twip_to_pt(line)}pt"
                     except: pass
 
-            # List detection
-            num_pr = ppr.find(qn("w:numPr"))
-            if num_pr is not None:
-                num_id_el = num_pr.find(qn("w:numId"))
-                ilvl_el = num_pr.find(qn("w:ilvl"))
-                if num_id_el is not None:
-                    list_info = (
-                        num_id_el.get(qn("w:val"), "0"),
-                        int(ilvl_el.get(qn("w:val"), "0")) if ilvl_el is not None else 0,
-                    )
+            shd = ppr.find(qn("w:shd"))
+            if shd is not None:
+                fill = shd.get(qn("w:fill"))
+                shading_color = rgb_hex(fill) if fill else None
 
-        # Build inner HTML from runs + inline images
+        # paragraph-level rPr for default run formatting
+        p_rpr = ppr.find(qn("w:rPr")) if ppr is not None else None
+        p_default_bold   = p_rpr is not None and p_rpr.find(qn("w:b")) is not None
+        p_default_color  = None
+        p_default_size   = None
+        p_default_font   = None
+        if p_rpr is not None:
+            c_el = p_rpr.find(qn("w:color"))
+            if c_el is not None: p_default_color = rgb_hex(c_el.get(qn("w:val")))
+            s_el = p_rpr.find(qn("w:sz"))
+            if s_el is not None: p_default_size = half_pt_to_px(s_el.get(qn("w:val")))
+            f_el = p_rpr.find(qn("w:rFonts"))
+            if f_el is not None:
+                p_default_font = (f_el.get(qn("w:ascii")) or
+                                  f_el.get(qn("w:hAnsi")) or
+                                  f_el.get(qn("w:cs")))
+
+        # Build inner html
         inner = ""
+        list_info = get_list_info(ppr)
+
         for child in para._p:
-            tag = "" if callable(child.tag) else etree.QName(child).localname
-            if tag == "r":
-                # Inline images inside the run
+            if callable(child.tag): continue
+            local = etree.QName(child).localname
+            if local == "r":
                 imgs = get_inline_images(child)
                 inner += "".join(imgs)
-                # Run text
-                from docx.text.run import Run
-                run = Run(child, para)
-                inner += parse_run(run)
-            elif tag == "hyperlink":
+                inner += parse_run(child, para)
+            elif local == "hyperlink":
                 href = ""
-                for rel_id_attr in [
-                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id",
-                    "r:id",
-                ]:
-                    rel_id = child.get(rel_id_attr)
+                for attr in ["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "r:id"]:
+                    rel_id = child.get(attr)
                     if rel_id and rel_id in doc.part.rels:
                         href = doc.part.rels[rel_id].target_ref
                         break
                 link_inner = ""
                 for r_el in child.findall(qn("w:r")):
-                    from docx.text.run import Run
-                    link_inner += parse_run(Run(r_el, para))
-                inner += f'<a href="{href}" target="_blank">{link_inner}</a>'
-            elif tag == "drawing":
+                    link_inner += parse_run(r_el, para)
+                inner += f'<a href="{href}" target="_blank" style="color:#1a0dab;">{link_inner}</a>'
+            elif local == "drawing":
                 imgs = get_inline_images(child)
                 inner += "".join(imgs)
+            elif local == "br":
+                br_type = child.get(qn("w:type"), "textWrapping")
+                if br_type == "page":
+                    inner += '<div style="page-break-after:always;"></div>'
+                else:
+                    inner += "<br>"
 
         inner = inner.strip()
         if not inner:
-            return "<p style='margin:0; min-height:1em;'>&nbsp;</p>"
+            after_pt = space_after_pt if space_after_pt is not None else 0
+            return f'<p style="margin:0 0 {after_pt}pt 0;min-height:0.8em;">&nbsp;</p>'
 
-        # Determine HTML tag from style name
         heading_map = {
-            "Heading1": "h1", "heading1": "h1", "Heading 1": "h1",
-            "Heading2": "h2", "heading2": "h2", "Heading 2": "h2",
-            "Heading3": "h3", "heading3": "h3", "Heading 3": "h3",
-            "Heading4": "h4", "Heading5": "h5", "Heading6": "h6",
-            "Title": "h1", "Subtitle": "h2",
+            "Heading1":"h1","heading1":"h1","Heading 1":"h1",
+            "Heading2":"h2","heading2":"h2","Heading 2":"h2",
+            "Heading3":"h3","heading3":"h3","Heading 3":"h3",
+            "Heading4":"h4","Heading5":"h5","Heading6":"h6",
+            "Title":"h1","Subtitle":"h2",
         }
         html_tag = heading_map.get(style_name, "p")
 
-        # Build paragraph CSS
         p_styles = {}
-        if align:
-            p_styles["text-align"] = align
-        if indent_left:
-            p_styles["padding-left"] = indent_left
-        if indent_right:
-            p_styles["padding-right"] = indent_right
-        if space_before:
-            p_styles["margin-top"] = space_before
-        if space_after:
-            p_styles["margin-bottom"] = space_after
-        else:
-            p_styles["margin-bottom"] = "4pt"
+        if align:                 p_styles["text-align"] = align
+        if indent_left_px:        p_styles["padding-left"] = f"{indent_left_px}px"
+        if indent_right_px:       p_styles["padding-right"] = f"{indent_right_px}px"
+        if indent_firstline_px is not None:
+            p_styles["text-indent"] = f"{indent_firstline_px}px"
+        if space_before_pt:       p_styles["margin-top"]    = f"{space_before_pt}pt"
+        p_styles["margin-bottom"] = f"{space_after_pt}pt" if space_after_pt is not None else "6pt"
+        if line_height:
+            if isinstance(line_height, float):
+                p_styles["line-height"] = str(line_height)
+            else:
+                p_styles["line-height"] = line_height
+        if shading_color and shading_color != "#ffffff":
+            p_styles["background-color"] = shading_color
+        if p_default_color: p_styles["color"] = p_default_color
+        if p_default_size:  p_styles["font-size"] = f"{p_default_size}px"
+        if p_default_font:  p_styles["font-family"] = f"'{p_default_font}',sans-serif"
 
+        # List item: use <li> but don't wrap in ul/ol here — handled by flush logic
         if list_info:
-            ilvl = list_info[1]
-            p_styles["padding-left"] = f"{(ilvl + 1) * 24}px"
-            p_styles["margin-left"] = f"{(ilvl + 1) * 24}px"
-            p_styles["display"] = "list-item"
-            p_styles["list-style-position"] = "outside"
-            # Check if ordered or unordered from numbering XML
-            num_id = list_info[0]
-            try:
-                numbering_part = doc.part.numbering_part
-                num_xml = numbering_part._element
-                ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-                # Find abstract num for this numId
-                num_el = num_xml.find(f'.//{{{ns}}}num[@{{{ns}}}numId="{num_id}"]')
-                if num_el is None:
-                    num_el = next((n for n in num_xml.findall(f'.//{{{ns}}}num') 
-                                if n.get(f'{{{ns}}}numId') == num_id), None)
-                is_ordered = False
-                if num_el is not None:
-                    abs_id_el = num_el.find(f'{{{ns}}}abstractNumId')
-                    if abs_id_el is not None:
-                        abs_id = abs_id_el.get(f'{{{ns}}}val')
-                        abs_el = next((a for a in num_xml.findall(f'.//{{{ns}}}abstractNum')
-                                    if a.get(f'{{{ns}}}abstractNumId') == abs_id), None)
-                        if abs_el is not None:
-                            lvl_el = next((l for l in abs_el.findall(f'.//{{{ns}}}lvl')
-                                        if l.get(f'{{{ns}}}ilvl') == str(ilvl)), None)
-                            if lvl_el is not None:
-                                fmt_el = lvl_el.find(f'{{{ns}}}numFmt')
-                                if fmt_el is not None:
-                                    fmt = fmt_el.get(f'{{{ns}}}val', '')
-                                    is_ordered = fmt in ('decimal', 'lowerLetter', 'upperLetter', 
-                                                        'lowerRoman', 'upperRoman')
-                p_styles["list-style-type"] = "decimal" if is_ordered else "disc"
-            except Exception:
-                p_styles["list-style-type"] = "disc"
+            num_id, ilvl, is_ordered = list_info
+            indent_px = (ilvl + 1) * 28
+            p_styles["margin-left"] = f"{indent_px}px"
+            p_styles["padding-left"] = "4px"
+            # Remove margin-bottom tightness for lists
+            if "margin-bottom" not in p_styles or p_styles["margin-bottom"] == "6pt":
+                p_styles["margin-bottom"] = "2pt"
+            style_str = ";".join(f"{k}:{v}" for k,v in p_styles.items())
+            return f'<li data-numid="{num_id}" data-ilvl="{ilvl}" data-ordered="{1 if is_ordered else 0}" style="{style_str}">{inner}</li>'
 
-        style_str = "; ".join(f"{k}: {v}" for k, v in p_styles.items())
+        style_str = ";".join(f"{k}:{v}" for k,v in p_styles.items())
         return f'<{html_tag} style="{style_str}">{inner}</{html_tag}>'
 
+    # ── Table parser ────────────────────────────────────────────────────────
     def parse_table(table):
+        # Read table-level borders
+        tbl_pr = table._tbl.find(qn("w:tblPr"))
+        tbl_border_color = "#cccccc"
+        tbl_border_size  = 1
+        if tbl_pr is not None:
+            tb = tbl_pr.find(qn("w:tblBorders"))
+            if tb is not None:
+                inside_h = tb.find(qn("w:insideH"))
+                if inside_h is not None:
+                    sz = inside_h.get(qn("w:sz"))
+                    col = inside_h.get(qn("w:color"))
+                    if sz: tbl_border_size = max(1, round(int(sz) / 8))
+                    if col and col.upper() != "AUTO": tbl_border_color = f"#{col.lower()}"
+
         rows_html = ""
         for row in table.rows:
             cells_html = ""
             for cell in row.cells:
                 tc = cell._tc
-                # Colspan
-                grid_span = tc.find(qn("w:tcPr") + "/" + qn("w:gridSpan"))
-                colspan = ""
-                if grid_span is not None:
-                    span_val = grid_span.get(qn("w:val"), "1")
-                    if span_val != "1":
-                        colspan = f' colspan="{span_val}"'
-
-                # Background color
+                # Merge info
                 tc_pr = tc.find(qn("w:tcPr"))
+                colspan = ""
+                cell_width = ""
                 cell_bg = ""
+                cell_valign = "top"
+                cell_border = ""
+
                 if tc_pr is not None:
+                    gs = tc_pr.find(qn("w:gridSpan"))
+                    if gs is not None:
+                        sv = gs.get(qn("w:val"), "1")
+                        if sv != "1": colspan = f' colspan="{sv}"'
+
                     shd = tc_pr.find(qn("w:shd"))
                     if shd is not None:
                         fill = shd.get(qn("w:fill"))
-                        if fill and fill.upper() != "AUTO" and fill != "FFFFFF":
+                        if fill and fill.upper() not in ("AUTO","FFFFFF","auto"):
                             cell_bg = f"background-color:#{fill.lower()};"
 
+                    va = tc_pr.find(qn("w:vAlign"))
+                    if va is not None:
+                        va_map = {"top":"top","center":"middle","bottom":"bottom"}
+                        cell_valign = va_map.get(va.get(qn("w:val"),"top"), "top")
+
+                    tcW = tc_pr.find(qn("w:tcW"))
+                    if tcW is not None:
+                        w_val  = tcW.get(qn("w:w"))
+                        w_type = tcW.get(qn("w:type"), "")
+                        if w_val and w_type in ("dxa", ""):
+                            px = twip_to_px(w_val)
+                            if px: cell_width = f"width:{px}px;"
+
+                    # Per-cell borders
+                    tc_borders = tc_pr.find(qn("w:tcBorders"))
+                    if tc_borders is not None:
+                        sides = {}
+                        for side in ("top","left","bottom","right"):
+                            s_el = tc_borders.find(qn(f"w:{side}"))
+                            if s_el is not None:
+                                s_val = s_el.get(qn("w:val"),"single")
+                                s_color = s_el.get(qn("w:color"),"auto")
+                                s_sz    = s_el.get(qn("w:sz"),"8")
+                                if s_val == "nil":
+                                    sides[side] = "none"
+                                else:
+                                    px = max(1, round(int(s_sz)/8)) if s_sz.isdigit() else 1
+                                    c  = f"#{s_color.lower()}" if s_color.upper() != "AUTO" else tbl_border_color
+                                    sides[side] = f"{px}px solid {c}"
+                        if sides:
+                            for side, val in sides.items():
+                                cell_border += f"border-{side}:{val};"
+
+                if not cell_border:
+                    cell_border = f"border:{tbl_border_size}px solid {tbl_border_color};"
                 cell_inner = "".join(parse_paragraph(p) for p in cell.paragraphs)
-                # Also handle nested tables
-                for nested_tbl in cell._tc.findall(qn("w:tbl")):
+                # Nested tables
+                for nested_tbl in tc.findall(qn("w:tbl")):
                     from docx.table import Table as DocxTable
-                    cell_inner += parse_table(DocxTable(nested_tbl, cell._tc))
+                    cell_inner += parse_table(DocxTable(nested_tbl, tc))
 
                 cells_html += (
-                    f'<td{colspan} style="border:1px solid #ccc; padding:6px 10px; '
-                    f'vertical-align:top; {cell_bg}">{cell_inner}</td>'
+                    f'<td{colspan} style="padding:5px 8px;vertical-align:{cell_valign};'
+                    f'{cell_border}{cell_bg}{cell_width}">{cell_inner}</td>'
                 )
             rows_html += f"<tr>{cells_html}</tr>"
 
         return (
-            f'<table style="border-collapse:collapse; width:100%; '
-            f'margin:12px 0;">{rows_html}</table>'
+            f'<table style="border-collapse:collapse;width:100%;margin:8px 0;'
+            f'table-layout:auto;">{rows_html}</table>'
         )
 
-    # --- Main body pass ---
+    # ── Body pass with list flush ───────────────────────────────────────────
     body_html = ""
-    body_el = doc.element.body
-    para_idx = 0
+    body_el   = doc.element.body
+    para_idx  = 0
     table_idx = 0
-    pending_list_items = []   # (html_str, is_ordered, ilvl)
-    current_list_type = None  # 'ol' or 'ul'
 
-    def flush_list():
-        nonlocal body_html, pending_list_items, current_list_type
-        if not pending_list_items:
-            return
-        tag = "ol" if current_list_type == "ol" else "ul"
-        body_html += f'<{tag} style="margin:4pt 0; padding-left:0;">'
-        for item_html in pending_list_items:
-            body_html += item_html
-        body_html += f'</{tag}>'
-        pending_list_items = []
-        current_list_type = None
+    # list state
+    list_stack = []   # stack of (num_id, ilvl, is_ordered)
+
+    def flush_lists_to(target_ilvl=-1):
+        nonlocal body_html
+        while list_stack and list_stack[-1][1] > target_ilvl:
+            _, ilvl, is_ordered = list_stack.pop()
+            tag = "ol" if is_ordered else "ul"
+            body_html += f"</{tag}>"
 
     for child in body_el:
-        if callable(child.tag):
+        if callable(child.tag): continue
+        try:
+            local = etree.QName(child).localname
+        except Exception:
             continue
-        local = etree.QName(child).localname
+
         if local == "p":
-            para = doc.paragraphs[para_idx]
-            para_idx += 1
-            # Check if this paragraph is a list item
-            ppr = para._p.find(qn("w:pPr"))
-            is_list = ppr is not None and ppr.find(qn("w:numPr")) is not None
-            if is_list:
-                p_html = parse_paragraph(para)
-                # Detect ol vs ul from list-style-type in the rendered html
-                is_ordered = 'list-style-type: decimal' in p_html
-                new_type = "ol" if is_ordered else "ul"
-                if current_list_type and current_list_type != new_type:
-                    flush_list()
-                current_list_type = new_type
-                pending_list_items.append(p_html)
-            else:
-                flush_list()
-                body_html += parse_paragraph(para)
+            if para_idx >= len(doc.paragraphs):
+                continue
+            try:
+                para      = doc.paragraphs[para_idx]
+                para_idx += 1
+                ppr       = para._p.find(qn("w:pPr"))
+                li = get_list_info(ppr)
+
+                if li:
+                    num_id, ilvl, is_ordered = li
+                    while list_stack and list_stack[-1][1] >= ilvl:
+                        _, _, ordered = list_stack.pop()
+                        tag = "ol" if ordered else "ul"
+                        body_html += f"</{tag}>"
+                    tag = "ol" if is_ordered else "ul"
+                    body_html += f'<{tag} style="margin:4pt 0 4pt {ilvl*28}px;padding-left:20px;">'
+                    list_stack.append((num_id, ilvl, is_ordered))
+                    body_html += parse_paragraph(para)
+                else:
+                    flush_lists_to(-1)
+                    body_html += parse_paragraph(para)
+            except Exception as e:
+                print(f"Paragraph parse error (idx {para_idx}): {e}")
+                para_idx += 1
+
         elif local == "tbl":
-            flush_list()
-            body_html += parse_table(doc.tables[table_idx])
+            flush_lists_to(-1)
+            if table_idx < len(doc.tables):
+                try:
+                    body_html += parse_table(doc.tables[table_idx])
+                except Exception as e:
+                    print(f"Table parse error (idx {table_idx}): {e}")
             table_idx += 1
 
-    flush_list()
+        elif local == "sectPr":
+            pass
 
-       
+    flush_lists_to(-1)
+
+    # ── Document-level page layout ──────────────────────────────────────────
+    page_width_px  = 816   # default Letter
+    margin_left_px = 96
+    margin_right_px = 96
+    try:
+        body_pr = body_el.find(qn("w:sectPr"))
+        if body_pr is None:
+            # last child may be sectPr
+            body_pr = body_el[-1] if len(body_el) > 0 else None
+            if body_pr is not None and etree.QName(body_pr).localname != "sectPr":
+                body_pr = None
+        if body_pr is not None:
+            pg_sz = body_pr.find(qn("w:pgSz"))
+            pg_mar = body_pr.find(qn("w:pgMar"))
+            if pg_sz is not None:
+                w = pg_sz.get(qn("w:w"))
+                if w: page_width_px = twip_to_px(w) or page_width_px
+            if pg_mar is not None:
+                ml = pg_mar.get(qn("w:left"))
+                mr = pg_mar.get(qn("w:right"))
+                if ml: margin_left_px  = twip_to_px(ml) or margin_left_px
+                if mr: margin_right_px = twip_to_px(mr) or margin_right_px
+    except Exception as e:
+        print(f"Page layout read failed: {e}")
+
+    content_width_px = page_width_px - margin_left_px - margin_right_px
+
+    # ── Collect default body font/size from document styles ─────────────────
+    default_font = "Calibri, Arial, sans-serif"
+    default_size = "12pt"
+    try:
+        from docx.oxml.ns import qn as _qn
+        styles_part = doc.part.styles
+        if styles_part is not None:
+            ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            for style_el in styles_part._element.findall(f"{{{ns}}}style"):
+                if (style_el.get(f"{{{ns}}}type") == "paragraph" and
+                        style_el.get(f"{{{ns}}}default") == "1"):
+                    rpr = style_el.find(f"{{{ns}}}rPr")
+                    if rpr is not None:
+                        sz = rpr.find(f"{{{ns}}}sz")
+                        fn = rpr.find(f"{{{ns}}}rFonts")
+                        if sz is not None:
+                            pt = round(int(sz.get(f"{{{ns}}}val","24")) / 2, 1)
+                            default_size = f"{pt}pt"
+                        if fn is not None:
+                            fname = (fn.get(f"{{{ns}}}ascii") or
+                                     fn.get(f"{{{ns}}}hAnsi") or
+                                     fn.get(f"{{{ns}}}cs"))
+                            if fname: default_font = f"'{fname}', sans-serif"
+                    break
+    except Exception:
+        pass
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Document</title>
 <style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
-    font-family: 'Calibri', 'Arial', sans-serif;
-    font-size: 12pt;
+    font-family: {default_font};
+    font-size: {default_size};
     line-height: 1.5;
-    max-width: 900px;
-    margin: 40px auto;
-    padding: 0 24px;
     color: #111;
+    background: #fff;
+    padding: {margin_left_px}px;
+    max-width: {page_width_px}px;
+    margin: 0 auto;
   }}
-  img {{ display: inline-block; vertical-align: middle; }}
-  table {{ page-break-inside: avoid; }}
-  h1, h2, h3, h4, h5, h6 {{ margin-top: 16pt; margin-bottom: 4pt; }}
+  p, h1, h2, h3, h4, h5, h6 {{ margin: 0; padding: 0; }}
+  table {{ border-collapse: collapse; }}
+  img {{ display: inline-block; vertical-align: middle; max-width: 100%; }}
   a {{ color: #1a0dab; }}
+  ol, ul {{ margin: 0; padding: 0; }}
+  li {{ margin: 0; }}
 </style>
 </head>
 <body>
@@ -1499,6 +1618,189 @@ def convert_docx_to_html_faithful(input_path: str) -> str:
     return html
 
 
+def convert_docx_to_html_libreoffice(input_path: str, output_path: str) -> str:
+    """
+    Pixel-perfect DOCX → HTML using LibreOffice Writer macro export.
+    Uses the 'writer8' + fixed-layout HTML approach that preserves
+    absolute positioning of every element exactly like wordtohtml.net
+    """
+    import subprocess, shutil, tempfile, glob, base64, re as _re
+    from pathlib import Path
+
+    def find_bin(*names):
+        for n in names:
+            found = shutil.which(n)
+            if found:
+                return found
+            if Path(n).exists():
+                return n
+        return None
+
+    lo_bin = find_bin(
+        "libreoffice", "soffice",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/usr/bin/libreoffice", "/usr/bin/soffice",
+        "/usr/lib/libreoffice/program/soffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    )
+
+    if lo_bin:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                # Use the fixed-layout HTML filter — this is what gives
+                # pixel-perfect absolute positioning like wordtohtml.net
+                filter_options = (
+                    "HTML (StarWriter):"
+                    "EmbedImages=true,"
+                    "FixedLayout=true,"
+                    "WriterLayout=true"
+                )
+                result = subprocess.run([
+                    lo_bin,
+                    "--headless",
+                    "--norestore",
+                    "--nofirststartwizard",
+                    "--convert-to", f"html:{filter_options}",
+                    "--outdir", tmpdir,
+                    input_path,
+                ], capture_output=True, text=True, timeout=120)
+
+                print("LO stdout:", result.stdout)
+                print("LO stderr:", result.stderr)
+
+                html_files = glob.glob(os.path.join(tmpdir, "*.html")) + \
+                             glob.glob(os.path.join(tmpdir, "*.HTML"))
+
+                if not html_files:
+                    # Retry with simpler filter name
+                    result2 = subprocess.run([
+                        lo_bin,
+                        "--headless",
+                        "--norestore",
+                        "--convert-to", "html",
+                        "--outdir", tmpdir,
+                        input_path,
+                    ], capture_output=True, text=True, timeout=120)
+                    html_files = glob.glob(os.path.join(tmpdir, "*.html")) + \
+                                 glob.glob(os.path.join(tmpdir, "*.HTML"))
+
+                if html_files:
+                    html_file = html_files[0]
+                    with open(html_file, "r", encoding="utf-8", errors="replace") as f:
+                        raw_html = f.read()
+
+                    # ── Embed ALL images as base64 ─────────────────────────
+                    # LO puts images in a subfolder e.g. filename_html_files/
+                    base_name = Path(input_path).stem
+                    img_dirs = [
+                        tmpdir,
+                        os.path.dirname(html_file),
+                        os.path.join(tmpdir, base_name + "_html_files"),
+                    ]
+                    img_dirs += glob.glob(os.path.join(tmpdir, "*_html_files"))
+                    img_dirs += glob.glob(os.path.join(tmpdir, "*_files"))
+                    img_dirs = list(dict.fromkeys(img_dirs))  # dedupe
+
+                    def embed_src(match):
+                        src = match.group(1)
+                        if src.startswith(("http", "data:", "//", "#")):
+                            return match.group(0)
+                        decoded = src
+                        for d in img_dirs:
+                            for candidate in [
+                                os.path.join(d, decoded),
+                                os.path.join(d, os.path.basename(decoded)),
+                            ]:
+                                if os.path.exists(candidate):
+                                    ext = candidate.rsplit(".", 1)[-1].lower()
+                                    mime = {
+                                        "png": "image/png",
+                                        "jpg": "image/jpeg",
+                                        "jpeg": "image/jpeg",
+                                        "gif": "image/gif",
+                                        "svg": "image/svg+xml",
+                                        "bmp": "image/bmp",
+                                        "tiff": "image/tiff",
+                                        "webp": "image/webp",
+                                        "wmf": "image/x-wmf",
+                                        "emf": "image/x-emf",
+                                    }.get(ext, "image/png")
+                                    with open(candidate, "rb") as imgf:
+                                        b64 = base64.b64encode(imgf.read()).decode()
+                                    return f'src="data:{mime};base64,{b64}"'
+                        return match.group(0)
+
+                    raw_html = _re.sub(r'src="([^"]+)"', embed_src, raw_html)
+
+                    # ── Also embed any url(...) in <style> blocks ──────────
+                    def embed_css_url(match):
+                        src = match.group(1).strip("'\"")
+                        if src.startswith(("http", "data:", "//")):
+                            return match.group(0)
+                        for d in img_dirs:
+                            for candidate in [
+                                os.path.join(d, src),
+                                os.path.join(d, os.path.basename(src)),
+                            ]:
+                                if os.path.exists(candidate):
+                                    ext = candidate.rsplit(".", 1)[-1].lower()
+                                    mime = {
+                                        "png": "image/png", "jpg": "image/jpeg",
+                                        "jpeg": "image/jpeg", "gif": "image/gif",
+                                        "svg": "image/svg+xml", "bmp": "image/bmp",
+                                        "woff": "font/woff", "woff2": "font/woff2",
+                                        "ttf": "font/ttf",
+                                    }.get(ext, "image/png")
+                                    with open(candidate, "rb") as imgf:
+                                        b64 = base64.b64encode(imgf.read()).decode()
+                                    return f"url('data:{mime};base64,{b64}')"
+                        return match.group(0)
+
+                    raw_html = _re.sub(r'url\(([^)]+)\)', embed_css_url, raw_html)
+
+                    # ── Inject responsive wrapper + scrollbar fix ──────────
+                    inject_css = """
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  html { background: #f0f0f0; }
+  body {
+    margin: 0 auto !important;
+    padding: 20px !important;
+    background: #ffffff !important;
+    box-shadow: 0 0 20px rgba(0,0,0,0.15);
+    overflow-x: auto !important;
+  }
+  img { max-width: 100% !important; height: auto !important; }
+  table { border-collapse: collapse; max-width: 100%; }
+  @media print {
+    html { background: white; }
+    body { box-shadow: none; padding: 0 !important; margin: 0 !important; }
+  }
+</style>"""
+                    if "</head>" in raw_html:
+                        raw_html = raw_html.replace("</head>", inject_css + "\n</head>", 1)
+                    else:
+                        raw_html = inject_css + raw_html
+
+                    with open(output_path, "w", encoding="utf-8") as out:
+                        out.write(raw_html)
+
+                    return raw_html
+
+            except subprocess.TimeoutExpired:
+                print("LibreOffice timed out")
+            except Exception as e:
+                import traceback
+                print(f"LibreOffice conversion failed: {e}")
+                print(traceback.format_exc())
+
+    # ── Fallback: manual parser ────────────────────────────────────────────
+    print("LibreOffice not found or failed — using manual parser fallback")
+    html_output = convert_docx_to_html_faithful(input_path)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_output)
+    return html_output
 # ---------------- PPT HELPERS ----------------
 def set_text_frame_defaults(text_frame, margins=(20, 20, 18, 18), align=PP_ALIGN.LEFT):
     text_frame.word_wrap = True
@@ -3271,24 +3573,20 @@ Rules:
             ext = filename.rsplit(".", 1)[-1].lower()
             if ext != "docx":
                 return jsonify({"error": "HTML converter only supports .docx files"}), 400
-            _set(20, "Parsing document structure", "~3 seconds")
+            _set(20, "Converting with LibreOffice", "~8 seconds")
             output_filename = f"converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
-            _set(50, "Embedding images", "~2 seconds")
             try:
-                html_output = convert_docx_to_html_faithful(filepath)
+                html_output = convert_docx_to_html_libreoffice(filepath, output_path)
             except Exception as e:
                 return jsonify({"error": f"Conversion failed: {type(e).__name__}: {str(e)}"}), 500
-            _set(90, "Writing HTML file", "~1 second")
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(html_output)
             _set(100, "Done", "Complete")
             return jsonify({
-    "message": "✅ HTML generated successfully",
-    "download_url": f"/download/{output_filename}",
-    "copy_url": f"/raw-html/{output_filename}",
-    "job_id": job_id
-})
+                "message": "✅ HTML generated successfully",
+                "download_url": f"/download/{output_filename}",
+                "copy_url": f"/raw-html/{output_filename}",
+                "job_id": job_id
+            })
 
         # ── All remaining modes need file text ─────────────────────────────
         _set(8, "Extracting text", "~2 seconds")

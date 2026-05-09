@@ -421,7 +421,9 @@ button { cursor: pointer; }
 }
 
 .upload-card {
-  min-height: clamp(135px, 16vh, 185px);
+  height: 90px;
+  min-height: 90px;
+  max-height: 90px;
   border: 1.5px dashed var(--blue-border);
   display: flex;
   align-items: center;
@@ -429,7 +431,7 @@ button { cursor: pointer; }
   text-align: center;
   cursor: pointer;
   transition: .2s ease;
-  padding: 22px;
+  padding: 10px 22px;
   flex: 0 0 auto;
 }
 
@@ -449,9 +451,10 @@ button { cursor: pointer; }
   margin: 0 auto 10px;
 }
 
-.upload-card h1 { font-size: 1.35rem; margin: 0 0 10px; letter-spacing: -0.03em; }
-.upload-card p { color: var(--muted); margin: 0 0 13px; line-height: 1.5; }
+.upload-card h1 { font-size: 1rem; margin: 0 0 2px; letter-spacing: -0.02em; }
+.upload-card p { color: var(--muted); margin: 0; line-height: 1.3; font-size: .82rem; }
 .upload-card .browse { color: var(--blue); font-weight: 800; }
+.upload-icon { display: none; }
 
 .step-title { display: none; }
 .step-num { color: #344054; }
@@ -479,20 +482,24 @@ button { cursor: pointer; }
   border-style: dashed;
   border-color: var(--blue-border);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   overflow: hidden;
-  padding: 14px;
+  padding: 10px;
+  position: relative;
 }
 
 .template-showcase {
   width: 100%;
   height: 100%;
-  min-height: clamp(300px, 39vh, 460px);
-  display: grid;
-  place-items: center;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: #1f2937;
+  position: relative;
+  overflow: hidden;
 }
 
 /* FIX 4: Image always fits inside the preview area at any scale */
@@ -505,6 +512,12 @@ button { cursor: pointer; }
   object-fit: contain;
   object-position: center;
   border-radius: 12px;
+  position: absolute;
+  inset: 0;
+}
+
+.template-showcase {
+  position: relative;
 }
 
 .placeholder-visual {
@@ -2205,6 +2218,45 @@ downloadBtn.textContent = 'Copy';
   renderDocumentsModal();
   renderFavoritesModal();
   renderNotifications();
+  // Full-page drag and drop
+const dragOverlay = document.createElement('div');
+dragOverlay.id = 'globalDragOverlay';
+dragOverlay.style.cssText = `
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(20,87,255,0.10);
+  border: 3px dashed #1457ff;
+  border-radius: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  backdrop-filter: blur(1px);
+`;
+dragOverlay.innerHTML = `<div style="background:#fff;border-radius:18px;padding:32px 52px;text-align:center;box-shadow:0 20px 60px rgba(20,87,255,.18);pointer-events:none;">
+  <div style="font-size:3rem;margin-bottom:10px;">☁</div>
+  <div style="font-size:1.4rem;font-weight:900;color:#1457ff;">Drop your file anywhere</div>
+  <div style="color:#667085;margin-top:6px;">Supports .docx, .pdf, .txt</div>
+</div>`;
+document.body.appendChild(dragOverlay);
+
+let dragCounter = 0;
+document.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  dragCounter++;
+  dragOverlay.style.display = 'flex';
+});
+document.addEventListener('dragleave', (e) => {
+  dragCounter--;
+  if (dragCounter <= 0) { dragCounter = 0; dragOverlay.style.display = 'none'; }
+});
+document.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  dragOverlay.style.display = 'none';
+  const file = e.dataTransfer.files[0];
+  if (file) await uploadFile(file);
+});
 </script>
 </body>
 </html>
