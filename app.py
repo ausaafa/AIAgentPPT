@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-
+import subprocess
+import tempfile
+import shutil
+from pathlib import Path
 import os
 import re
 from datetime import datetime
@@ -3445,6 +3448,206 @@ def upload_file():
 
     return jsonify({"error": "Invalid file type"}), 400
 
+def find_binary(*names):
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+        if os.path.exists(name):
+            return name
+    return None
+
+
+def convert_docx_to_html_pixel_perfect(input_path: str, output_path: str) -> str:
+    """
+    True visual DOCX -> HTML converter.
+
+    Pipeline:
+    1. LibreOffice renders DOCX to PDF.
+    2. Poppler pdftoppm renders each PDF page to PNG.
+    3. HTML embeds those page PNGs as base64.
+
+    This is not semantic/editable HTML. It is visual HTML.
+    It is the closest option for 1:1 layout, colors, fonts, equations,
+    bullets, tables, and rotated text.
+    """
+
+    import base64
+    import subprocess
+    import tempfile
+    import shutil
+    from pathlib import Path
+
+    libreoffice = find_binary(
+        "libreoffice",
+        "soffice",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/usr/bin/libreoffice",
+        "/usr/bin/soffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    )
+
+    pdftoppm = find_binary(
+        "pdftoppm",
+        r"C:\poppler-26.02.0\Library\bin\pdftoppm.exe",
+        "/usr/bin/pdftoppm",
+    )
+
+    if not libreoffice:
+        raise RuntimeError("LibreOffice is not installed or not found in PATH.")
+
+    if not pdftoppm:
+        raise RuntimeError("pdftoppm is not installed or not found in PATH.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        # 1. DOCX -> PDF using LibreOffice
+        pdf_result = subprocess.run(
+            [
+                libreoffice,
+                "--headless",
+                "--norestore",
+                "--nofirststartwizard",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(tmpdir_path),
+                input_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        if pdf_result.returncode != 0:
+            raise RuntimeError(
+                "LibreOffice PDF conversion failed:\n"
+                + (pdf_result.stderr or pdf_result.stdout or "Unknown error")
+            )
+
+        pdf_files = list(tmpdir_path.glob("*.pdf"))
+
+        if not pdf_files:
+            raise RuntimeError("LibreOffice did not create a PDF file.")
+
+        pdf_path = pdf_files[0]
+
+        # 2. PDF -> PNG pages
+        # 220 DPI is a good quality/size balance.
+        page_prefix = tmpdir_path / "page"
+
+        image_result = subprocess.run(
+        [
+            pdftoppm,
+            "-png",
+            "-r",
+            "300",
+            str(pdf_path),
+            str(page_prefix),
+        ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        if image_result.returncode != 0:
+            raise RuntimeError(
+                "pdftoppm page rendering failed:\n"
+                + (image_result.stderr or image_result.stdout or "Unknown error")
+            )
+
+        page_images = sorted(tmpdir_path.glob("page-*.png"))
+
+        if not page_images:
+            raise RuntimeError("No PNG pages were created from the PDF.")
+
+        # 3. Build self-contained HTML with base64 images
+        page_html = []
+
+        for idx, img_path in enumerate(page_images, start=1):
+            with open(img_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+
+            page_html.append(
+                f"""
+                <section class="page">
+                  <img src="data:image/png;base64,{b64}" alt="Page {idx}" />
+                </section>
+                """
+            )
+
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Converted Document</title>
+<style>
+  * {{
+    box-sizing: border-box;
+  }}
+
+  html,
+  body {{
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    font-family: Arial, sans-serif;
+  }}
+
+  .document {{
+    width: 100%;
+    max-width: 980px;
+    margin: 0 auto;
+    display: block;
+    background: #ffffff;
+  }}
+
+  .page {{
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    box-shadow: none;
+    line-height: 0;
+  }}
+
+  .page img {{
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+  }}
+
+  @media print {{
+    .page {{
+      page-break-after: always;
+    }}
+  }}
+</style>
+</head>
+<body>
+  <main class="document">
+    {''.join(page_html)}
+  </main>
+</body>
+</html>
+"""
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html)
+
+        return html
+    
+@app.route("/generated-assets/<asset_folder>/<filename>")
+def generated_assets(asset_folder, filename):
+    safe_folder = secure_filename(asset_folder)
+    safe_file = secure_filename(filename)
+    asset_dir = os.path.join(app.config["GENERATED_FOLDER"], safe_folder)
+    return send_from_directory(asset_dir, safe_file)
 @app.route("/generate", methods=["POST"])
 def generate_output():
     import uuid as _uuid
@@ -3577,9 +3780,35 @@ Rules:
             output_filename = f"converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             output_path = os.path.join(app.config["GENERATED_FOLDER"], output_filename)
             try:
-                html_output = convert_docx_to_html_libreoffice(filepath, output_path)
+                # Try the new high-fidelity converter first
+                html_output = convert_docx_to_html_pixel_perfect(filepath, output_path)
+
             except Exception as e:
-                return jsonify({"error": f"Conversion failed: {type(e).__name__}: {str(e)}"}), 500
+                print(f"Pixel-perfect converter failed: {type(e).__name__}: {e}")
+                print("Falling back to old DOCX → HTML converter...")
+
+                try:
+                    # Old working converter fallback
+                    html_output = convert_docx_to_html_libreoffice(filepath, output_path)
+
+                except Exception as e2:
+                    print(f"LibreOffice HTML fallback failed: {type(e2).__name__}: {e2}")
+                    print("Falling back to manual parser...")
+
+                    try:
+                        html_output = convert_docx_to_html_faithful(filepath)
+                        with open(output_path, "w", encoding="utf-8") as f:
+                            f.write(html_output)
+
+                    except Exception as e3:
+                        return jsonify({
+                            "error": (
+                                "DOCX to HTML failed. "
+                                f"Pixel-perfect: {type(e).__name__}: {str(e)} | "
+                                f"LibreOffice fallback: {type(e2).__name__}: {str(e2)} | "
+                                f"Manual fallback: {type(e3).__name__}: {str(e3)}"
+                            )
+                        }), 500
             _set(100, "Done", "Complete")
             return jsonify({
                 "message": "✅ HTML generated successfully",
