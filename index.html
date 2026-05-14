@@ -2298,58 +2298,64 @@ if (template === 'docx_to_html') {
     panelToast.classList.remove('show');
 
     const url = downloadBtn.dataset.htmlUrl;
-    const originalText = downloadBtn.textContent;
 
+    if (!url) {
+      showToast('Copy URL missing. Regenerate the file.', 3000);
+      return;
+    }
+
+    downloadBtn.classList.remove('copied');
     downloadBtn.classList.add('copying');
-    downloadBtn.classList.add('copying');
-downloadBtn.textContent = 'Copying...';
+    downloadBtn.textContent = 'Preparing...';
 
     try {
-      const htmlRes = await fetch(url, { cache: 'no-store' });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const htmlRes = await fetch(url, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
 
       if (!htmlRes.ok) {
         throw new Error('Could not load generated HTML');
       }
 
-      const htmlText = await htmlRes.text();
+      downloadBtn.textContent = 'Copying...';
 
+      const htmlText = await htmlRes.text();
       await copyTextToClipboard(htmlText);
 
       downloadBtn.classList.remove('copying');
       downloadBtn.classList.add('copied');
       downloadBtn.textContent = 'Copied';
 
-      downloadBtn.classList.remove('copying');
-downloadBtn.classList.add('copied');
-downloadBtn.textContent = 'Copied';
-
-showToast('HTML code copied to clipboard', 2500);
-
-setTimeout(() => {
-  downloadBtn.classList.remove('copied');
-  downloadBtn.textContent = 'Copy';
-}, 1600);
+      showToast('HTML code copied to clipboard', 2500);
 
       setTimeout(() => {
         downloadBtn.classList.remove('copied');
-        downloadBtn.textContent = originalText;
+        downloadBtn.textContent = 'Copy';
       }, 1600);
 
     } catch (err) {
       console.error('Copy failed:', err);
-      
-     downloadBtn.classList.remove('copying');
-downloadBtn.textContent = 'Copy';
 
-      showToast('Copy failed. Opening generated HTML instead.', 3500);
-      window.open(url, '_blank');
+      downloadBtn.classList.remove('copying');
+      downloadBtn.textContent = 'Copy';
+
+      showToast('Copy failed. Use Download from My Documents instead.', 3500);
     }
   };
 
-        } else {
-          downloadBtn.dataset.url = data.download_url;
-          downloadBtn.onclick = () => { panelToast.classList.remove('show'); window.location.href = downloadBtn.dataset.url; };
-        }
+} else {
+  downloadBtn.dataset.url = data.download_url;
+  downloadBtn.onclick = () => {
+    panelToast.classList.remove('show');
+    window.location.href = downloadBtn.dataset.url;
+  };
+}
       } else {
         setProgress(0, 'Generation failed', 'No download URL returned.');
         setOutputStatus('Failed');
