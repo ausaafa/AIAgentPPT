@@ -1762,7 +1762,7 @@ Sub AddDrugSlideAnimations()
     Next sld
 End Sub
 `;
-
+let cachedHtmlText = null;
   let uploadedFilename = null;
   let uploadedMeta = '';
   let documents = [];
@@ -2174,27 +2174,40 @@ if (selected === 'mcq_grader') {
   async function openGeneratedPreview(url, template) {
     previewModalTitle.textContent = template === 'docx_to_html' ? 'HTML Code Preview' : 'Generated File Preview';
     previewModalBody.innerHTML = '';
-    if (template === 'docx_to_html') {
-      try {
-        const res = await fetch(url);
-        const htmlText = await res.text();
-        previewModalBody.innerHTML = `
-          <div class="code-preview-toolbar">
-            <button class="copy-code-btn" type="button" id="copyPreviewCodeBtn">Copy HTML</button>
-          </div>
-          <pre class="code-preview" id="codePreviewBlock"></pre>
-        `;
-        document.getElementById('codePreviewBlock').textContent = htmlText;
-        document.getElementById('copyPreviewCodeBtn').onclick = async () => {
-          await navigator.clipboard.writeText(htmlText);
-          showToast('HTML copied to clipboard', 3000);
-        };
-        previewModal.classList.add('show');
-      } catch (err) {
-        showToast('Could not load HTML preview', 3500);
-      }
+   if (template === 'docx_to_html') {
+  downloadBtn.textContent = 'Loading...';
+  downloadBtn.disabled = true;
+
+  // Fetch the HTML once immediately while the server is warm
+  try {
+    const r = await fetch(data.copy_url || data.download_url, { cache: 'no-store' });
+    cachedHtmlText = await r.text();
+  } catch (e) {
+    cachedHtmlText = null;
+  }
+
+  downloadBtn.disabled = false;
+  downloadBtn.textContent = 'Copy';
+
+  downloadBtn.onclick = async () => {
+    if (!cachedHtmlText) {
+      showToast('HTML not ready yet, please wait', 2500);
       return;
     }
+    try {
+      await navigator.clipboard.writeText(cachedHtmlText);
+      downloadBtn.classList.add('copied');
+      downloadBtn.textContent = 'Copied ✓';
+      showToast('HTML copied to clipboard', 2500);
+      setTimeout(() => {
+        downloadBtn.classList.remove('copied');
+        downloadBtn.textContent = 'Copy';
+      }, 1800);
+    } catch (e) {
+      showToast('Clipboard blocked — use Download instead', 3500);
+    }
+  };
+}
     previewModalBody.innerHTML = `<iframe class="preview-frame" src="${url}"></iframe>`;
     previewModal.classList.add('show');
   }
