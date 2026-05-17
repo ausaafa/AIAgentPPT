@@ -3339,7 +3339,7 @@ def translate_docx_keep_layout(input_path: str, output_path: str):
             if p.text.strip():
                 paragraphs.append(p)
 
-    batch_size = 35
+    batch_size = 80
 
     all_runs = []
     for paragraph in paragraphs:
